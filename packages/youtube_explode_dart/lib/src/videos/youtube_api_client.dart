@@ -26,13 +26,7 @@ class YoutubeApiClient {
   // See [androidVr] and [visionOs] below.
 
   /// Default YouTube InnerTube API key.
-  static const String defaultApiKey = 'AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc';
-
-  /// InnerTube API key configured via environment variable `YOUTUBE_API_KEY`.
-  static const String apiKey = String.fromEnvironment(
-    'YOUTUBE_API_KEY',
-    defaultValue: defaultApiKey,
-  );
+  static const String apiKey = String.fromEnvironment('YOUTUBE_API_KEY');
 
   /// Default InnerTube player API URL for the iOS client.
   static const String defaultIosPlayerUrl =
@@ -67,7 +61,6 @@ class YoutubeApiClient {
       }
     },
   }, iosPlayerUrl);
-
 
   /// This provides also muxed streams but seems less reliable than [ios].
   /// Note: This client includes androidSdkVersion, which yt-dlp now marks as
@@ -196,7 +189,6 @@ class YoutubeApiClient {
       },
     },
   }, 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false');
-
 
   /// Note: since 2026-07 YouTube only returns these merged HLS formats for
   /// some logged-in or "trusted" sessions; anonymous requests may get fewer
