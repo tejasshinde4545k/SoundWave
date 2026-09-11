@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://github.com/tejasshinde4545k/SoundWave/raw/master/.github/assets/Soundwave_banner.png" width="100%" alt="SoundWave">
+<img src=".github/assets/Soundwave_banner.png" width="100%" alt="SoundWave">
 
 # SoundWave
 
@@ -59,9 +59,9 @@ This repository contains my development and customization of SoundWave, includin
 
 <div align="center">
 
-|                                        Dashboard                                       |                                      Music Player                                      |                                         Search                                         |                                         Library                                        |
-| :------------------------------------------------------------------------------------: | :------------------------------------------------------------------------------------: | :------------------------------------------------------------------------------------: | :------------------------------------------------------------------------------------: |
-| <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/1.jpg" width="200"> | <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/2.jpg" width="200"> | <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/3.jpg" width="200"> | 
+| Dashboard | Music Player | Search |
+| :---: | :---: | :---: |
+| <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/1.jpg" width="200"> | <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/2.jpg" width="200"> | <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/3.jpg" width="200"> |
 
 </div>
 
