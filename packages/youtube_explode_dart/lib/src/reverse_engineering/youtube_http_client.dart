@@ -31,6 +31,10 @@ class YoutubeHttpClient extends http.BaseClient {
     'accept-language': 'en-US,en;q=0.5',
   };
 
+  /// InnerTube endpoint URL template configured via environment variable `YOUTUBE_PLAYER`.
+  static const String youtubePlayerUrlTemplate =
+      String.fromEnvironment('YOUTUBE_PLAYER');
+
   /// For any custom YoutubeHttpClient to override headers easily
   Map<String, String> get headers => defaultHeaders;
 
@@ -310,7 +314,7 @@ class YoutubeHttpClient extends http.BaseClient {
     assert(action == 'next' || action == 'browse' || action == 'search');
 
     final url = Uri.parse(
-      'https://www.youtube.com/youtubei/v1/$action?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8',
+      youtubePlayerUrlTemplate.replaceAll(r'$action', action),
     );
 
     final body = {

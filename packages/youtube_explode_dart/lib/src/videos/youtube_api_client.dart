@@ -25,6 +25,25 @@ class YoutubeApiClient {
   // in favor of `visionos` alone (yt-dlp#17461/#17462, closing #17456).
   // See [androidVr] and [visionOs] below.
 
+  /// Default YouTube InnerTube API key.
+  static const String defaultApiKey = 'AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc';
+
+  /// InnerTube API key configured via environment variable `YOUTUBE_API_KEY`.
+  static const String apiKey = String.fromEnvironment(
+    'YOUTUBE_API_KEY',
+    defaultValue: defaultApiKey,
+  );
+
+  /// Default InnerTube player API URL for the iOS client.
+  static const String defaultIosPlayerUrl =
+      'https://www.youtube.com/youtubei/v1/player?key=$apiKey&prettyPrint=false';
+
+  /// InnerTube player API URL configured via environment variable `YOUTUBE_PLAYER_URL`.
+  static const String iosPlayerUrl = String.fromEnvironment(
+    'YOUTUBE_PLAYER_URL',
+    defaultValue: defaultIosPlayerUrl,
+  );
+
   /// Has limited streams but doesn't require signature deciphering.
   /// Now requires a PO Token for HTTPS/DASH GVS streams unless a player
   /// token is present (see [android] for another non-tokenless option, or
@@ -47,7 +66,8 @@ class YoutubeApiClient {
         'utcOffsetMinutes': 0
       }
     },
-  }, 'https://www.youtube.com/youtubei/v1/player?key=AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc&prettyPrint=false');
+  }, iosPlayerUrl);
+
 
   /// This provides also muxed streams but seems less reliable than [ios].
   /// Note: This client includes androidSdkVersion, which yt-dlp now marks as

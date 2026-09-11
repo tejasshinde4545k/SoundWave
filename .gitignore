@@ -66,3 +66,8 @@ lib/localization/app_*.dart
 lib/localization/untranslated.json
 
 lib/config/jamendo_config.dart
+
+# Environment variables
+.env
+*.env
+
