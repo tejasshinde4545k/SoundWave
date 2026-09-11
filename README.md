@@ -59,7 +59,7 @@ This repository contains my development and customization of SoundWave, includin
 
 <div align="center">
 
-| Dashboard | Music Player | Search |
+| Dashboard | Search | Music Player |
 | :---: | :---: | :---: |
 | <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/1.jpg" width="200"> | <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/2.jpg" width="200"> | <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/3.jpg" width="200"> |
 
