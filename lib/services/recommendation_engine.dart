@@ -117,7 +117,8 @@ class RecommendationEngine {
       } catch (_) {}
     }
 
-    var profile = userProfile ??
+    var profile =
+        userProfile ??
         const UserMusicProfile(
           isColdStart: true,
           totalSampledSongs: 0,
@@ -139,6 +140,7 @@ class RecommendationEngine {
     // ── Score → dedup → sort ──────────────────────────────────────────────────
     return rankCandidates(
       rawCandidates,
+      contextSong: currentSong,
       excludeIds: excludeIds,
       limit: limit,
       recentlyPlayedIds: recentlyPlayedIds,
@@ -153,6 +155,7 @@ class RecommendationEngine {
   /// location/regional preference signals.
   List<Map<String, dynamic>> rankCandidates(
     List<Map<String, dynamic>> candidates, {
+    Map<String, dynamic>? contextSong,
     Set<String> excludeIds = const {},
     int limit = 15,
     Set<String> recentlyPlayedIds = const {},
@@ -167,7 +170,8 @@ class RecommendationEngine {
       } catch (_) {}
     }
 
-    var profile = userProfile ??
+    var profile =
+        userProfile ??
         const UserMusicProfile(
           isColdStart: true,
           totalSampledSongs: 0,
@@ -188,23 +192,50 @@ class RecommendationEngine {
 
     final scores = <String, double>{};
     final songMap = <String, Map<String, dynamic>>{};
+    final seenYtids = <String>{};
+
+    String? contextKey;
+    if (contextSong != null) {
+      contextKey = canonicalSongKey(
+        contextSong['title']?.toString() ?? '',
+        contextSong['artist']?.toString() ?? '',
+      );
+    }
 
     for (final c in candidates) {
       final id = c['ytid']?.toString() ?? '';
-      if (id.isEmpty || id.startsWith('jamendo:') || excludeIds.contains(id)) {
+      if (id.isEmpty ||
+          id.startsWith('jamendo:') ||
+          excludeIds.contains(id) ||
+          seenYtids.contains(id)) {
         continue;
       }
       final title = c['title']?.toString() ?? '';
       if (!isLikelySong(title, isLive: c['isLive'] == true)) continue;
+      if (contextSong != null &&
+          !isValidQueueCandidate(candidate: c, contextSong: contextSong)) {
+        continue;
+      }
+
+      final artist = c['artist']?.toString() ?? '';
+      final canonicalKey = canonicalSongKey(title, artist);
+
+      // Skip if this candidate is just a re-upload/alt-spelling of the
+      // song already playing, under a different YouTube ID.
+      if (contextKey != null && canonicalKey == contextKey) {
+        seenYtids.add(id);
+        continue;
+      }
+
+      seenYtids.add(id);
 
       final base = (c[_scoreKey] as double?) ?? 50.0;
-      var score = (scores[id] ?? 0.0) + base;
+      var score = (scores[canonicalKey] ?? 0.0) + base;
 
       if (recentlyPlayedIds.contains(id)) score -= _recentPenalty;
       if (likedIds.contains(id)) score += _likedBonus;
 
       // Personal artist match bonus
-      final artist = c['artist']?.toString() ?? '';
       if (artist.isNotEmpty && profile.hasArtist(artist)) {
         score += 30.0;
       }
@@ -224,8 +255,14 @@ class RecommendationEngine {
       );
       score += regBonus;
 
-      scores[id] = score;
-      songMap[id] = c;
+      // Keep the highest-scoring representative of this canonical song —
+      // e.g. if both a related-video hit and a search hit resolve to the
+      // same underlying track, keep whichever scored higher.
+      final existing = scores[canonicalKey];
+      if (existing == null || score > existing) {
+        scores[canonicalKey] = score;
+        songMap[canonicalKey] = c;
+      }
     }
 
     debugPrint(
@@ -239,7 +276,9 @@ class RecommendationEngine {
       return Map<String, dynamic>.from(songMap[e.key]!)..remove(_scoreKey);
     }).toList();
 
-    debugPrint('[SoundWave Recommendation] FINAL RANKED CANDIDATES: ${result.length}');
+    debugPrint(
+      '[SoundWave Recommendation] FINAL RANKED CANDIDATES: ${result.length}',
+    );
     return result;
   }
 
@@ -251,9 +290,13 @@ class RecommendationEngine {
   ) async {
     final ytid = currentSong['ytid']?.toString() ?? '';
     final artist = currentSong['artist']?.toString().trim() ?? '';
-    final title = currentSong['title']?.toString().trim() ?? '';
 
     // All three sources fire concurrently to minimise wall-clock time.
+    // NOTE: We intentionally do NOT search "$artist $title" here because that
+    // query floods results with re-uploads/variants of the same song
+    // (e.g. "Shayad Lyrics", "Shayad Reprise", "Shayad Slowed+Reverb").
+    // Instead we use "$artist songs" (broad artist catalog) and
+    // "$artist popular songs" (top hits) to find genuinely different tracks.
     final futures = <Future<List<Map<String, dynamic>>>>[
       _fetchRelatedVideos(ytid, excludeIds),
       if (artist.isNotEmpty)
@@ -265,8 +308,13 @@ class RecommendationEngine {
         )
       else
         Future.value([]),
-      if (artist.isNotEmpty && title.isNotEmpty)
-        _fetchSearch('$artist $title', excludeIds, _titleBase, _maxTitleResults)
+      if (artist.isNotEmpty)
+        _fetchSearch(
+          '$artist popular songs',
+          excludeIds,
+          _titleBase,
+          _maxTitleResults,
+        )
       else
         Future.value([]),
     ];
@@ -280,7 +328,7 @@ class RecommendationEngine {
       '[SoundWave Recommendation] ARTIST CANDIDATES: ${results[1].length}',
     );
     debugPrint(
-      '[SoundWave Recommendation] SEARCH CANDIDATES: ${results[2].length}',
+      '[SoundWave Recommendation] POPULAR CANDIDATES: ${results[2].length}',
     );
 
     return results.expand((r) => r).toList();
@@ -362,6 +410,170 @@ class RecommendationEngine {
       );
       return [];
     }
+  }
+  // ── Queue relevance gate ─────────────────────────────────────────────────────
+
+  /// Returns true when [candidateTitle] is a variant/re-upload of [contextTitle].
+  ///
+  /// "Shayad" → rejects "Shayad Lyrics", "Shayad Reprise", "Shayad Slowed", etc.
+  /// This is the primary guard against the same-song variant contamination bug.
+  static bool _isSameSongVariant(String candidateTitle, String contextTitle) {
+    if (contextTitle.isEmpty) return false;
+
+    // Strip common suffixes / qualifiers from both sides to get core titles.
+    final variantSuffixRe = RegExp(
+      r'\s*[\(\[\|·•-].*$|'
+      r'\b(official|audio|video|lyrics?|lyric|full|hd|4k|remix|cover|'
+      'acoustic|reprise|slowed|reverb|lofi|lo.fi|extended|remastered|'
+      'unplugged|instrumental|karaoke|version|feat.?|ft.?|'
+      'lockdown|quarantine|studio|live|concert|performance|'
+      'recreation|recreation|slow|sped.?up|nightcore|'
+      r'piano|violin|guitar|flute|tribute)\b.*$',
+      caseSensitive: false,
+    );
+
+    String coreTitle(String t) {
+      var s = t.toLowerCase().trim();
+      s = s.replaceFirst(variantSuffixRe, '').trim();
+      // Remove any remaining non-alphanumeric clutter
+      s = s.replaceAll(RegExp(r'[^\w\s]'), '').replaceAll(RegExp(r'\s+'), ' ').trim();
+      return s;
+    }
+
+    final coreCtx = coreTitle(contextTitle);
+    final coreCand = coreTitle(candidateTitle);
+
+    if (coreCtx.isEmpty || coreCand.isEmpty) return false;
+
+    if (coreCand == coreCtx) return true;
+
+    // Variant when one starts with the other on a word boundary,
+    // provided the prefix is substantial (not a single short generic word).
+    if (coreCand.startsWith('$coreCtx ') && coreCtx.length >= 4) return true;
+    if (coreCtx.startsWith('$coreCand ') && coreCand.length >= 8) return true;
+
+    return false;
+  }
+
+  /// Final gate before a search/recommendation-sourced candidate may enter
+  /// the live queue. isLikelySong() only asks "is this a song?" — this asks
+  /// Final gate before a search/recommendation-sourced candidate may enter
+  /// the live queue.
+  ///
+  /// A candidate is rejected when:
+  ///   1. Same canonical song identity
+  ///   2. Same YouTube ID
+  ///   3. Obvious version of the same underlying song (Shayad variant protection)
+  ///   4. Non-music content / not likely a song
+  ///
+  /// Genuinely different songs (including different devotional songs) are ACCEPTED.
+  static bool isValidQueueCandidate({
+    required Map<String, dynamic> candidate,
+    required Map<String, dynamic> contextSong,
+  }) {
+    final title = candidate['title']?.toString() ?? '';
+    final ytid = candidate['ytid']?.toString() ?? '';
+    final artist = candidate['artist']?.toString() ?? '';
+
+    final ctxTitle = contextSong['title']?.toString() ?? '';
+    final ctxYtid = contextSong['ytid']?.toString() ?? '';
+    final ctxArtist = contextSong['artist']?.toString() ?? '';
+
+    final candKey = canonicalSongKey(title, artist);
+    final ctxKey = canonicalSongKey(ctxTitle, ctxArtist);
+
+    void logDecision(String decision, String reason) {
+      debugPrint(
+        '[RECOMMENDATION FILTER]\n'
+        'TITLE=$title\n'
+        'ARTIST=$artist\n'
+        'YTID=$ytid\n'
+        'CANONICAL_KEY=$candKey\n'
+        'CONTEXT_KEY=$ctxKey\n'
+        'DECISION=$decision\n'
+        'REASON=$reason',
+      );
+    }
+
+    if (title.isEmpty || ytid.isEmpty) {
+      logDecision('REJECT', 'empty_title_or_id');
+      return false;
+    }
+
+    final nonMusicExtra = RegExp(
+      r'\b(responds?\s+to|reacts?\s+to|statement\s+on|spokesperson|'
+      r'press\s+release|breaking|update\s+on|coverage|analysis|'
+      r'exclusive|full\s+speech|address(es)?\s+to)\b',
+      caseSensitive: false,
+    );
+    if (nonMusicExtra.hasMatch(title) ||
+        !isLikelySong(title, isLive: candidate['isLive'] == true)) {
+      logDecision('REJECT', 'non_music_content');
+      return false;
+    }
+
+    // 1. Same YouTube ID
+    if (ctxYtid.isNotEmpty && ytid == ctxYtid) {
+      logDecision('REJECT', 'same_youtube_id');
+      return false;
+    }
+
+    // 2. Same canonical song identity
+    if (ctxKey.isNotEmpty && candKey == ctxKey) {
+      logDecision('REJECT', 'same_canonical_identity');
+      return false;
+    }
+
+    // 3. Obvious version of the same underlying song (Shayad variant protection)
+    if (_isSameSongVariant(title, ctxTitle)) {
+      debugPrint(
+        '[QUEUE TRACE] REJECTED same-song-variant: "$title" vs context "$ctxTitle"',
+      );
+      logDecision('REJECT', 'same_song_variant');
+      return false;
+    }
+
+    logDecision('ACCEPT', 'valid_different_song');
+    return true;
+  }
+
+  // ── Canonical dedup key ──────────────────────────────────────────────────────
+
+  /// Normalizes a title/artist pair into a stable key so that re-uploads,
+  /// alternate spellings, and minor typos of the same song collapse to one
+  /// entry instead of appearing as separate queue items (e.g. "Shayad" vs
+  /// "Sayad" vs "Shaayad" by the same artist).
+  static String canonicalSongKey(String title, String artist) {
+    String normalize(String s) {
+      var t = s.toLowerCase();
+      t = t.replaceAll(
+        RegExp(
+          r'\b(official|audio|video|lyrics?|full|hd|4k|remix|cover|'
+          r'acoustic|version|feat\.?|ft\.?)\b',
+          caseSensitive: false,
+        ),
+        '',
+      );
+      t = t.replaceAll(RegExp(r'[^\w\s]'), '');
+      t = t.replaceAll(RegExp(r'\s+'), ' ').trim();
+      return t;
+    }
+
+    String foldPhonetic(String s) {
+      // Only fold when long enough that collapsing doubled letters / common
+      // digraphs won't accidentally merge two genuinely different short words.
+      if (s.length < 5) return s;
+      return s
+          .replaceAll(RegExp(r'(.)\1+'), r'$1')
+          .replaceAll('ph', 'f')
+          .replaceAll('sh', 's')
+          .replaceAll('ay', 'ai');
+    }
+
+    final normTitle = normalize(title);
+    final normArtist = normalize(artist);
+
+    return '${foldPhonetic(normTitle)}::${foldPhonetic(normArtist)}';
   }
 
   // ── Song-title filter ────────────────────────────────────────────────────────

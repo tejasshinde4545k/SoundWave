@@ -31,6 +31,7 @@ import 'package:soundwave/main.dart' show logger;
 import 'package:soundwave/services/data_manager.dart';
 import 'package:soundwave/services/io_service.dart';
 import 'package:soundwave/services/jamendo_service.dart';
+import 'package:soundwave/services/jiosaavn_service.dart';
 import 'package:soundwave/services/lyrics_manager.dart';
 import 'package:soundwave/services/music_region_service.dart';
 import 'package:soundwave/services/playlists_manager.dart';
@@ -177,6 +178,10 @@ Future<List> fetchJamendoSongsList(String searchQuery) async {
 /// Returns true if [song] is a Jamendo track (identified by the 'jamendo:'
 /// prefix in its ytid field).
 bool isJamendoSong(Map song) => isJamendoId(song['ytid']?.toString());
+
+/// Returns true if [song] is a JioSaavn track (identified by the 'jiosaavn:'
+/// prefix in its ytid field).
+bool isJioSaavnSong(Map song) => isJioSaavnId(song['ytid']?.toString());
 
 Future<List> getRecommendedSongs() async {
   try {
@@ -410,10 +415,10 @@ Future<Map?> _resolveSongForLikedStatus(String songId, Map? songData) async {
   final cachedSong = _findSongById(userLikedSongsList.value, songId);
   if (cachedSong != null) return Map<String, dynamic>.from(cachedSong);
 
-  // Do NOT call getSongDetails (YouTube API) for Jamendo IDs — that would fail.
-  if (isJamendoId(songId)) {
+  // Do NOT call getSongDetails (YouTube API) for Jamendo or JioSaavn IDs — that would fail.
+  if (isJamendoId(songId) || isJioSaavnId(songId)) {
     logger.log(
-      '_resolveSongForLikedStatus: cannot resolve Jamendo song without songData '
+      '_resolveSongForLikedStatus: cannot resolve non-YouTube song without songData '
       'for id $songId',
     );
     return null;
@@ -550,10 +555,13 @@ Future<void> removeRadioStationFromLiked(String radioStationId) async {
 /// Returns true if the song with [songIdToCheck] has been downloaded for
 /// offline playback.
 ///
-/// Jamendo songs are NEVER offline — downloading is not supported for them.
+/// Jamendo and JioSaavn songs are NEVER offline — downloading is not supported for them.
 bool isSongAlreadyOffline(songIdToCheck) {
-  // Jamendo songs cannot be downloaded.
-  if (isJamendoId(songIdToCheck?.toString())) return false;
+  // Non-YouTube songs cannot be downloaded.
+  if (isJamendoId(songIdToCheck?.toString()) ||
+      isJioSaavnId(songIdToCheck?.toString())) {
+    return false;
+  }
   return userOfflineSongs.value.any((song) => song['ytid'] == songIdToCheck);
 }
 
@@ -664,10 +672,10 @@ Future<List<Map<String, int>>> getSkipSegments(String id) async {
 }
 
 Future<void> getSimilarSong(String songYtId) async {
-  // Jamendo songs cannot be used to seed YouTube recommendations.
-  if (isJamendoId(songYtId)) {
+  // Non-YouTube songs cannot be used to seed YouTube recommendations.
+  if (isJamendoId(songYtId) || isJioSaavnId(songYtId)) {
     logger.log(
-      'getSimilarSong: skipping Jamendo song $songYtId — '
+      'getSimilarSong: skipping non-YouTube song $songYtId — '
       'YouTube recommendations require a YouTube ID.',
     );
     return;
@@ -783,6 +791,16 @@ Future<String?> fetchSongStreamUrl(String songId, bool isLive) async {
     if (songId.isEmpty) {
       logger.log('fetchSongStreamUrl: songId is empty');
       return null;
+    }
+
+    // ── JioSaavn branch ────────────────────────────────────────────────────────
+    if (isJioSaavnId(songId)) {
+      final jiosaavnId = extractJioSaavnId(songId);
+      if (jiosaavnId == null || jiosaavnId.isEmpty) {
+        logger.log('fetchSongStreamUrl: invalid JioSaavn ID in "$songId"');
+        return null;
+      }
+      return await JioSaavnService.instance.getStreamUrl(jiosaavnId);
     }
 
     // ── Jamendo branch ────────────────────────────────────────────────────────

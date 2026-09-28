@@ -48,27 +48,39 @@ class VideoSearchList extends BasePagedList<Video> {
       return null;
     }
 
+    final videos = <Video>[];
+    for (final e in page.searchContent.whereType<SearchVideo>()) {
+      try {
+        videos.add(
+          Video(
+            e.id,
+            e.title,
+            e.author,
+            ChannelId(e.channelId),
+            e.uploadDate.toDateTime(),
+            e.uploadDate,
+            null,
+            e.description,
+            e.duration.toDuration(),
+            ThumbnailSet(e.id.value),
+            null,
+            Engagement(e.viewCount, null, null),
+            e.isLive,
+          ),
+        );
+      } catch (err) {
+        print(
+          '[YOUTUBE PARSER]\n'
+          'OPERATION=search\n'
+          'RESULT=SKIPPED_MALFORMED_RESULT\n'
+          'ERROR=$err\n'
+          'CONTINUE=true',
+        );
+      }
+    }
+
     return VideoSearchList(
-      page.searchContent
-          .whereType<SearchVideo>()
-          .map(
-            (e) => Video(
-              e.id,
-              e.title,
-              e.author,
-              ChannelId(e.channelId),
-              e.uploadDate.toDateTime(),
-              e.uploadDate,
-              null,
-              e.description,
-              e.duration.toDuration(),
-              ThumbnailSet(e.id.value),
-              null,
-              Engagement(e.viewCount, null, null),
-              e.isLive,
-            ),
-          )
-          .toList(),
+      videos,
       page,
       _httpClient,
     );

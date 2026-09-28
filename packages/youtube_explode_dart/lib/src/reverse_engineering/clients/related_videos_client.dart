@@ -11,13 +11,24 @@ class RelatedVideosClient {
 
   Iterable<Video> relatedVideos() sync* {
     for (final video in contents) {
-      Video? result;
-      if (video['compactVideoRenderer'] != null) {
-        result = _parseCompactVideo(video['compactVideoRenderer']);
-      } else if (video['lockupViewModel'] != null) {
-        result = _parseLockupView(video['lockupViewModel']);
+      try {
+        Video? result;
+        if (video['compactVideoRenderer'] != null) {
+          result = _parseCompactVideo(video['compactVideoRenderer']);
+        } else if (video['lockupViewModel'] != null) {
+          result = _parseLockupView(video['lockupViewModel']);
+        }
+        if (result != null) yield result;
+      } catch (e) {
+        print(
+          '[YOUTUBE PARSER]\n'
+          'OPERATION=related\n'
+          'RESULT=SKIPPED_MALFORMED_RESULT\n'
+          'ERROR=$e\n'
+          'CONTINUE=true',
+        );
+        continue;
       }
-      if (result != null) yield result;
     }
   }
 
@@ -54,7 +65,7 @@ class RelatedVideosClient {
         duration?.toDuration(),
         ThumbnailSet(videoId),
         [],
-        Engagement(int.parse((views ?? '0').stripNonDigits()), null, null),
+        Engagement(int.tryParse((views ?? '0').stripNonDigits()) ?? 0, null, null),
         duration == 'LIVE');
   }
 
@@ -95,7 +106,7 @@ class RelatedVideosClient {
         duration.toDuration(),
         ThumbnailSet(videoId),
         [],
-        Engagement(int.parse(videoCount.stripNonDigits()), null, null),
+        Engagement(int.tryParse(videoCount.stripNonDigits()) ?? 0, null, null),
         false,
       );
     }

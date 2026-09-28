@@ -36,7 +36,7 @@ import 'package:soundwave/services/router_service.dart';
 import 'package:soundwave/services/settings_manager.dart';
 import 'package:soundwave/utilities/flutter_toast.dart';
 import 'package:soundwave/utilities/formatter.dart'
-    show isJamendoId, formatDuration;
+    show isJamendoId, isJioSaavnId, formatDuration;
 import 'package:soundwave/utilities/playlist_dialogs.dart';
 import 'package:soundwave/widgets/no_artwork_cube.dart';
 import 'package:soundwave/widgets/overflow_menu_button.dart';
@@ -51,6 +51,7 @@ List<PopupMenuEntry<String>> _buildSongMenuItems({
   required ValueNotifier<bool> songDownloadStatus,
   required bool showQueueActions,
   required bool isJamendo,
+  bool isJioSaavn = false,
   bool isRecentSong = false,
   bool canRename = false,
   bool canRemove = false,
@@ -140,8 +141,8 @@ List<PopupMenuEntry<String>> _buildSongMenuItems({
         label: removeFromRecentlyPlayedText,
         colorScheme: colorScheme,
       ),
-    // Jamendo songs cannot be downloaded — hide the offline option entirely.
-    if (!isJamendo && (!offlineMode.value || songOfflineStatus.value))
+    // Jamendo & JioSaavn songs cannot be downloaded — hide the offline option entirely.
+    if (!isJamendo && !isJioSaavn && (!offlineMode.value || songOfflineStatus.value))
       PopupMenuItem<String>(
         value: 'offline',
         child: ValueListenableBuilder<bool>(
@@ -472,6 +473,7 @@ class _SongBarState extends State<SongBar> {
                   artist: _songArtist,
                   plays: plays,
                   isJamendo: isJamendoId(_ytid),
+                  isJioSaavn: isJioSaavnId(_ytid),
                   colorScheme: colorScheme,
                 ),
               ),
@@ -633,6 +635,7 @@ class _SongBarState extends State<SongBar> {
   ) {
     final canRename = widget.isFromLikedSongs || widget.playlistId != null;
     final isJamendo = isJamendoId(_ytid);
+    final isJioSaavn = isJioSaavnId(_ytid);
 
     return _buildSongMenuItems(
       context: context,
@@ -642,6 +645,7 @@ class _SongBarState extends State<SongBar> {
       songDownloadStatus: _songDownloadStatus,
       showQueueActions: widget.showQueueActions,
       isJamendo: isJamendo,
+      isJioSaavn: isJioSaavn,
       isRecentSong: widget.isRecentSong == true,
       canRename: canRename,
       canRemove: widget.onRemove != null,
@@ -656,6 +660,7 @@ class _SongInfo extends StatelessWidget {
     required this.artist,
     this.plays,
     this.isJamendo = false,
+    this.isJioSaavn = false,
     required this.colorScheme,
   });
 
@@ -663,6 +668,7 @@ class _SongInfo extends StatelessWidget {
   final String artist;
   final String? plays;
   final bool isJamendo;
+  final bool isJioSaavn;
   final ColorScheme colorScheme;
 
   @override
@@ -693,6 +699,33 @@ class _SongInfo extends StatelessWidget {
                 ),
               ),
             ),
+            if (isJioSaavn) ...[
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Text(
+                  '•',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                decoration: BoxDecoration(
+                  color: colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  'JioSaavn',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w500,
+                    color: colorScheme.primary,
+                  ),
+                ),
+              ),
+            ],
             if (isJamendo) ...[
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 4),

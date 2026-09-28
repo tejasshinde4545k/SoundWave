@@ -67,19 +67,22 @@ Map<String, dynamic> returnSongLayout(
   Video song, {
   String? playlistImage,
 }) {
-  // Split only on the first ' - ' so dashes inside the title are preserved.
   final sep = song.title.indexOf(' - ');
-  final artist = sep != -1 ? song.title.substring(0, sep) : song.author;
-  final rawTitle = sep != -1 ? song.title.substring(sep + 3) : song.title;
+  final hasExplicitArtist = sep != -1;
+  final artist = hasExplicitArtist ? song.title.substring(0, sep) : '';
+  final rawTitle = hasExplicitArtist
+      ? song.title.substring(sep + 3)
+      : song.title;
   final title = formatSongTitle(rawTitle);
 
   return {
     'id': index,
     'ytid': song.id.toString(),
     'title': title.isEmpty ? rawTitle.trim() : title,
-    'artist': artist,
+    'artist': artist, // empty when not explicitly in the title
     'artistId': song.channelId.toString(),
-    'videoAuthor': song.author,
+    'videoAuthor': song.author, // channel/uploader — never treated as artist
+    'artistVerified': hasExplicitArtist,
     'image': playlistImage ?? song.thumbnails.standardResUrl,
     'lowResImage': playlistImage ?? song.thumbnails.lowResUrl,
     'highResImage': playlistImage ?? song.thumbnails.maxResUrl,
@@ -168,5 +171,98 @@ Map<String, dynamic> returnJamendoSongLayout(
     // This field is optional; if absent, JamendoService.getStreamUrl() is
     // called at play time.
     if (audioUrl != null && audioUrl.isNotEmpty) 'jamendoAudioUrl': audioUrl,
+  };
+}
+
+// ─── JioSaavn helpers ────────────────────────────────────────────────────────
+
+/// The prefix that identifies a JioSaavn song in the app-wide `ytid` field.
+/// Example: ytid = 'jiosaavn:3IoDK8qI'
+const String jiosaavnIdPrefix = 'jiosaavn:';
+
+/// Returns true if [id] looks like a JioSaavn compound ID (starts with prefix).
+bool isJioSaavnId(String? id) => id?.startsWith(jiosaavnIdPrefix) ?? false;
+
+/// Extracts the raw JioSaavn alphanumeric ID from a compound ytid.
+/// Returns null if [ytid] is not a JioSaavn ID.
+String? extractJioSaavnId(String? ytid) {
+  if (!isJioSaavnId(ytid)) return null;
+  return ytid!.substring(jiosaavnIdPrefix.length);
+}
+
+/// Converts a raw JioSaavn API song object (from /api/search/songs or
+/// /api/songs) into the app's standard song map.
+///
+/// Response shape (saavn.dev / sumitkolhe/jiosaavn-api v0.1.0):
+///   {
+///     id: string,
+///     name: string,
+///     artists: { primary: [{name, ...}], ...},
+///     image: [{quality, url}, ...],
+///     downloadUrl: [{quality, url}, ...],
+///     duration: number (seconds),
+///     album: {id, name},
+///   }
+///
+/// The optional [preResolvedStreamUrl] short-circuits the stream URL lookup
+/// when the search response already contains a usable download URL.
+Map<String, dynamic> returnJioSaavnSongLayout(
+  int index,
+  Map<String, dynamic> song, {
+  String? preResolvedStreamUrl,
+}) {
+  final id = song['id']?.toString() ?? '';
+
+  // Primary artist name — pick the first primary artist if available.
+  final primaryArtists = song['artists']?['primary'];
+  final String artistName;
+  if (primaryArtists is List && primaryArtists.isNotEmpty) {
+    artistName = primaryArtists.first?['name']?.toString() ?? '';
+  } else {
+    artistName = song['primaryArtists']?.toString() ??
+        song['artist']?.toString() ??
+        '';
+  }
+
+  // Image: pick the highest available resolution from the list.
+  final imageList = song['image'];
+  var highRes = '';
+  var lowRes = '';
+  if (imageList is List && imageList.isNotEmpty) {
+    highRes = imageList.last['url']?.toString() ??
+        imageList.first['url']?.toString() ??
+        '';
+    lowRes = imageList.first['url']?.toString() ?? highRes;
+  }
+
+  // Duration (seconds).
+  final durationSec = song['duration'] != null
+      ? int.tryParse(song['duration'].toString())
+      : null;
+
+  // Album name.
+  final albumName = (song['album'] is Map)
+      ? (song['album']['name']?.toString() ?? '')
+      : (song['album']?.toString() ?? '');
+
+  return {
+    'id': index,
+    'ytid': '$jiosaavnIdPrefix$id',
+    'title': song['name']?.toString() ?? '',
+    'artist': artistName,
+    'album': albumName,
+    'image': highRes,
+    'lowResImage': lowRes,
+    'highResImage': highRes,
+    'duration': durationSec,
+    'isLive': false,
+    // Identifies the provider for debugging and queue trace output.
+    // Does NOT affect playback — `ytid` prefix is authoritative.
+    'source': 'jiosaavn',
+    // Pre-cached stream URL — avoids an extra API round-trip at play time.
+    // This field is optional; if absent, JioSaavnService.getStreamUrl() is
+    // called at play time via _getPlaybackUrl() in audio_service.dart.
+    if ((preResolvedStreamUrl ?? '').isNotEmpty)
+      'jiosaavnAudioUrl': preResolvedStreamUrl,
   };
 }

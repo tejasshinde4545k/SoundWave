@@ -29,7 +29,8 @@ import 'package:soundwave/main.dart';
 import 'package:soundwave/models/full_player_state.dart';
 import 'package:soundwave/models/position_data.dart';
 import 'package:soundwave/screens/now_playing_page.dart';
-import 'package:soundwave/utilities/formatter.dart' show isJamendoId;
+import 'package:soundwave/utilities/formatter.dart'
+    show isJamendoId, isJioSaavnId;
 import 'package:soundwave/widgets/marquee.dart';
 import 'package:soundwave/widgets/song_artwork.dart';
 
@@ -234,6 +235,10 @@ class _MiniPlayerBodyState extends State<_MiniPlayerBody>
                                 metadata.extras?['ytid']?.toString() ??
                                     metadata.id,
                               ),
+                              isJioSaavn: isJioSaavnId(
+                                metadata.extras?['ytid']?.toString() ??
+                                    metadata.id,
+                              ),
                               colorScheme: colorScheme,
                             ),
                           ),
@@ -295,12 +300,14 @@ class _MetadataWidget extends StatelessWidget {
     required this.title,
     required this.artist,
     this.isJamendo = false,
+    this.isJioSaavn = false,
     required this.colorScheme,
   });
 
   final String title;
   final String? artist;
   final bool isJamendo;
+  final bool isJioSaavn;
   final ColorScheme colorScheme;
 
   @override
@@ -348,6 +355,36 @@ class _MetadataWidget extends StatelessWidget {
                   letterSpacing: 0.3,
                 ),
               ),
+              if (isJioSaavn) ...[
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Text(
+                    '•',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 1,
+                  ),
+                  decoration: BoxDecoration(
+                    color: colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    'JioSaavn',
+                    style: TextStyle(
+                      fontSize: 9,
+                      fontWeight: FontWeight.w500,
+                      color: colorScheme.primary,
+                    ),
+                  ),
+                ),
+              ],
               if (isJamendo) ...[
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4),

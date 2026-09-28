@@ -28,11 +28,13 @@ import 'package:flutter/foundation.dart';
 import 'package:hive/hive.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:rxdart/rxdart.dart';
+import 'package:soundwave/config/jiosaavn_config.dart';
 import 'package:soundwave/main.dart';
 import 'package:soundwave/models/position_data.dart';
 import 'package:soundwave/services/common_services.dart';
 import 'package:soundwave/services/data_manager.dart';
 import 'package:soundwave/services/jamendo_service.dart';
+import 'package:soundwave/services/jiosaavn_service.dart';
 import 'package:soundwave/services/listening_stats_service.dart';
 import 'package:soundwave/services/proxy_manager.dart';
 import 'package:soundwave/services/recommendation_engine.dart';
@@ -41,8 +43,11 @@ import 'package:soundwave/utilities/formatter.dart'
     show
         isJamendoId,
         extractJamendoId,
+        isJioSaavnId,
+        extractJioSaavnId,
         returnSongLayout,
-        returnJamendoSongLayout;
+        returnJamendoSongLayout,
+        returnJioSaavnSongLayout;
 import 'package:soundwave/utilities/map_utils.dart';
 import 'package:soundwave/utilities/mediaitem.dart';
 import 'package:soundwave/utilities/queue_entry_utils.dart';
@@ -101,6 +106,7 @@ class MusifyAudioHandler extends BaseAudioHandler {
   bool _isAdvancingQueue = false;
   bool _isHandlingSongCompletion = false;
   bool _singleSongAutoNext = false;
+  bool _isResolvingNextSong = false;
 
   // ── Recommendation refill state ─────────────────────────────────────────────
   bool _isRefillInProgress = false;
@@ -859,8 +865,24 @@ class MusifyAudioHandler extends BaseAudioHandler {
 
         final queueSong = _queueEntryIds.createSong(rec);
         queueSong['isAutoPicked'] = true;
+        final _lenBefore = _queueList.length;
         _queueList.add(queueSong);
         added++;
+
+        debugPrint(
+          '[QUEUE TRACE]\n'
+          'SOURCE=recommendation\n'
+          'OPERATION=append\n'
+          'QUEUE_LENGTH_BEFORE=$_lenBefore\n'
+          'QUEUE_LENGTH_AFTER=${_queueList.length}\n'
+          'CURRENT_INDEX=$_currentQueueIndex\n'
+          'TITLE=${rec["title"]}\n'
+          'ARTIST=${rec["artist"]}\n'
+          'YTID=$recId\n'
+          'CANONICAL_KEY=${RecommendationEngine.canonicalSongKey(rec["title"]?.toString() ?? "", rec["artist"]?.toString() ?? "")}\n'
+          'SEARCH_QUERY=${baseSong["artist"]} songs (refill)\n'
+          'CALLER=_refillRecommendationQueue',
+        );
       }
 
       if (added > 0) {
@@ -914,7 +936,23 @@ class MusifyAudioHandler extends BaseAudioHandler {
 
       final queueSong = _queueEntryIds.createSong(song);
       queueSong['isManuallyAdded'] = true;
+      final _beforeLen = _queueList.length;
       _queueList.insert(insertIndex, queueSong);
+
+      debugPrint(
+        '[QUEUE TRACE]\n'
+        'SOURCE=manual\n'
+        'OPERATION=${playNext ? "insert-play-next" : "append"}\n'
+        'QUEUE_LENGTH_BEFORE=$_beforeLen\n'
+        'QUEUE_LENGTH_AFTER=${_queueList.length}\n'
+        'CURRENT_INDEX=$_currentQueueIndex\n'
+        'TITLE=${song["title"]}\n'
+        'ARTIST=${song["artist"]}\n'
+        'YTID=${song["ytid"]}\n'
+        'CANONICAL_KEY=${RecommendationEngine.canonicalSongKey(song["title"]?.toString() ?? "", song["artist"]?.toString() ?? "")}\n'
+        'SEARCH_QUERY=n/a\n'
+        'CALLER=addToQueue',
+      );
 
       if (_currentQueueIndex < 0) {
         _currentQueueIndex = 0;
@@ -997,6 +1035,7 @@ class MusifyAudioHandler extends BaseAudioHandler {
         await audioPlayer.setShuffleModeEnabled(false);
       }
 
+      final _beforeLen = _queueList.length;
       int? targetQueueIndex;
 
       for (var i = 0; i < songs.length; i++) {
@@ -1018,6 +1057,23 @@ class MusifyAudioHandler extends BaseAudioHandler {
             : insertIndex;
         _queueList.insertAll(safeInsertIndex, manuallyAddedSongs);
       }
+
+      // Log the full queue state after population
+      final _firstSong = songs.isNotEmpty ? songs[0] : null;
+      debugPrint(
+        '[QUEUE TRACE]\n'
+        'SOURCE=${replace ? "playlist-replace" : "playlist-append"}\n'
+        'OPERATION=${replace ? "replace" : "append"}\n'
+        'QUEUE_LENGTH_BEFORE=$_beforeLen\n'
+        'QUEUE_LENGTH_AFTER=${_queueList.length}\n'
+        'CURRENT_INDEX=$_currentQueueIndex\n'
+        'TITLE=${_firstSong?["title"]}\n'
+        'ARTIST=${_firstSong?["artist"]}\n'
+        'YTID=${_firstSong?["ytid"]}\n'
+        'CANONICAL_KEY=${RecommendationEngine.canonicalSongKey(_firstSong?["title"]?.toString() ?? "", _firstSong?["artist"]?.toString() ?? "")}\n'
+        'SEARCH_QUERY=n/a\n'
+        'CALLER=addPlaylistToQueue(songs=${songs.length}, replace=$replace, startIndex=$startIndex)',
+      );
 
       _hydrateQueueEntryIds();
       _updateQueueMediaItems();
@@ -1176,6 +1232,22 @@ class MusifyAudioHandler extends BaseAudioHandler {
           _currentQueueIndex >= 0 && _currentQueueIndex < _queueList.length
           ? cloneMap(_queueList[_currentQueueIndex])
           : null;
+
+      final _beforeLen = _queueList.length;
+      debugPrint(
+        '[QUEUE TRACE]\n'
+        'SOURCE=user\n'
+        'OPERATION=clear\n'
+        'QUEUE_LENGTH_BEFORE=$_beforeLen\n'
+        'QUEUE_LENGTH_AFTER=${currentSong != null ? 1 : 0}\n'
+        'CURRENT_INDEX=0\n'
+        'TITLE=${currentSong?["title"]}\n'
+        'ARTIST=${currentSong?["artist"]}\n'
+        'YTID=${currentSong?["ytid"]}\n'
+        'CANONICAL_KEY=${RecommendationEngine.canonicalSongKey(currentSong?["title"]?.toString() ?? "", currentSong?["artist"]?.toString() ?? "")}\n'
+        'SEARCH_QUERY=n/a\n'
+        'CALLER=clearQueue',
+      );
 
       // Cancel any in-flight recommendation refill.
       _recommendationGeneration++;
@@ -1791,6 +1863,7 @@ class MusifyAudioHandler extends BaseAudioHandler {
     _isAdvancingQueue = false;
     _isHandlingSongCompletion = false;
     _singleSongAutoNext = false;
+    _isResolvingNextSong = false;
     // Cancel any in-flight recommendation refill.
     _recommendationGeneration++;
     _isRefillInProgress = false;
@@ -2052,6 +2125,21 @@ class MusifyAudioHandler extends BaseAudioHandler {
 
     final ytid = song['ytid']?.toString() ?? '';
 
+    // Fast-path for JioSaavn songs: use the pre-resolved audio URL embedded
+    // in the song map at search time (avoids an extra API call).
+    if (isJioSaavnId(ytid)) {
+      final preResolved = song['jiosaavnAudioUrl']?.toString();
+      if (preResolved != null && preResolved.isNotEmpty) {
+        return preResolved;
+      }
+      // No pre-resolved URL: fetch from JioSaavnService.
+      final jiosaavnId = extractJioSaavnId(ytid);
+      if (jiosaavnId != null && jiosaavnId.isNotEmpty) {
+        return JioSaavnService.instance.getStreamUrl(jiosaavnId);
+      }
+      return null;
+    }
+
     // Fast-path for Jamendo songs: use the pre-resolved audio URL that was
     // embedded in the song map at search time (avoids an extra API call).
     // The JamendoService in-memory cache is also checked via fetchSongStreamUrl
@@ -2162,11 +2250,12 @@ class MusifyAudioHandler extends BaseAudioHandler {
       unawaited(updateRecentlyPlayed(song['ytid'], songFallback: song));
 
       if (!isOffline) {
-        // Do NOT cache Jamendo stream URLs in Hive — they can expire and
-        // JamendoService manages its own short-lived in-memory cache.
-        if (!isJamendoId(song['ytid']?.toString())) {
+        // Do NOT cache JioSaavn or Jamendo stream URLs in Hive — they expire
+        // and each service manages its own short-lived in-memory cache.
+        final songYtid = song['ytid']?.toString() ?? '';
+        if (!isJamendoId(songYtid) && !isJioSaavnId(songYtid)) {
           final cacheKey =
-              'song_${song['ytid']}_${audioQualitySetting.value}_url';
+              'song_${songYtid}_${audioQualitySetting.value}_url';
           unawaited(addOrUpdateData<String>('cache', cacheKey, songUrl));
         }
       }
@@ -2210,7 +2299,13 @@ class MusifyAudioHandler extends BaseAudioHandler {
         if (songId != null && songId.isNotEmpty) {
           // For Jamendo songs, invalidate the in-memory stream cache so the
           // next attempt fetches a fresh URL from the API.
-          if (isJamendoId(songId)) {
+          if (isJioSaavnId(songId)) {
+            final jiosaavnId = extractJioSaavnId(songId);
+            if (jiosaavnId != null) {
+              JioSaavnService.instance.invalidateStreamCache(jiosaavnId);
+              song.remove('jiosaavnAudioUrl');
+            }
+          } else if (isJamendoId(songId)) {
             final jamendoId = extractJamendoId(songId);
             if (jamendoId != null) {
               JamendoService.instance.invalidateStreamCache(jamendoId);
@@ -2393,13 +2488,17 @@ class MusifyAudioHandler extends BaseAudioHandler {
   ) async {
     try {
       final tag = mapToMediaItem(song);
-      final isJamendo = isJamendoId(song['ytid']?.toString());
+      final songYtidForBuild = song['ytid']?.toString() ?? '';
+      final isJamendo = isJamendoId(songYtidForBuild);
+      final isJioSaavn = isJioSaavnId(songYtidForBuild);
+      // SponsorBlock only covers YouTube content.
+      final isNonYoutube = isJamendo || isJioSaavn;
 
       if (isOffline) {
         final fileSource = AudioSource.file(songUrl, tag: tag);
 
-        if (sponsorBlockSupport.value && !isJamendo) {
-          return _applyOfflineSponsorBlock(fileSource, song['ytid']) ??
+        if (sponsorBlockSupport.value && !isNonYoutube) {
+          return _applyOfflineSponsorBlock(fileSource, songYtidForBuild) ??
               fileSource;
         }
 
@@ -2409,8 +2508,8 @@ class MusifyAudioHandler extends BaseAudioHandler {
       final uri = Uri.parse(songUrl);
       final audioSource = AudioSource.uri(uri, tag: tag);
 
-      // SponsorBlock only covers YouTube content — skip for Jamendo.
-      if (!sponsorBlockSupport.value || isJamendo) {
+      // SponsorBlock only covers YouTube content — skip for JioSaavn/Jamendo.
+      if (!sponsorBlockSupport.value || isNonYoutube) {
         return audioSource;
       }
 
@@ -2519,28 +2618,290 @@ class MusifyAudioHandler extends BaseAudioHandler {
 
   // ─────────────────────────────────────────────────────────────────────────────
 
+  /// True if [candidate] canonically matches either the [baseSong] itself
+  /// or any song already sitting in the live queue — catches re-uploads
+  /// and alt-spellings that a raw ytid check would miss.
+  bool _isCanonicalDuplicate(Map<String, dynamic> candidate, Map baseSong) {
+    final candKey = RecommendationEngine.canonicalSongKey(
+      candidate['title']?.toString() ?? '',
+      candidate['artist']?.toString() ?? '',
+    );
+    final baseKey = RecommendationEngine.canonicalSongKey(
+      baseSong['title']?.toString() ?? '',
+      baseSong['artist']?.toString() ?? '',
+    );
+    if (candKey == baseKey) return true;
+
+    return _queueList.any((s) {
+      final sKey = RecommendationEngine.canonicalSongKey(
+        s['title']?.toString() ?? '',
+        s['artist']?.toString() ?? '',
+      );
+      return sKey == candKey;
+    });
+  }
+
+  /// Returns true if [ytid] identifies a non-YouTube provider (JioSaavn or Jamendo).
+  static bool _isNonYouTubeId(String? ytid) =>
+      isJamendoId(ytid) || isJioSaavnId(ytid);
+
   Map? _getLastPlayedYouTubeSong() {
     final current = currentSong;
-    if (current != null && !isJamendoId(current['ytid']?.toString())) {
+    if (current != null && !_isNonYouTubeId(current['ytid']?.toString())) {
       return current;
     }
     if (_currentQueueIndex >= 0 && _currentQueueIndex < _queueList.length) {
       final queued = _queueList[_currentQueueIndex];
-      if (!isJamendoId(queued['ytid']?.toString())) {
+      if (!_isNonYouTubeId(queued['ytid']?.toString())) {
         return queued;
       }
     }
     for (final song in _historyList) {
-      if (!isJamendoId(song['ytid']?.toString())) {
+      if (!_isNonYouTubeId(song['ytid']?.toString())) {
         return song;
       }
     }
     for (final song in _queueList) {
-      if (!isJamendoId(song['ytid']?.toString())) {
+      if (!_isNonYouTubeId(song['ytid']?.toString())) {
         return song;
       }
     }
     return null;
+  }
+
+  // ─── JioSaavn fallback (STEP 3 in the provider chain) ───────────────────────
+
+  /// Searches JioSaavn for songs related to [currentSong] and attempts to
+  /// play the best candidate.
+  ///
+  /// Search strategy (in order):
+  ///   1. "$artist songs" — broad artist catalog (different tracks).
+  ///   2. Artist name alone — looser match.
+  ///   3. Popular tracks by the artist (not implemented in saavn.dev, skipped).
+  ///
+  /// Before adding any candidate to the queue the method validates it using
+  /// [RecommendationEngine.canonicalSongKey] for cross-provider deduplication
+  /// so that a JioSaavn version of a song already in the queue (from YouTube)
+  /// is rejected.
+  Future<bool> _tryPlayJioSaavnFallback() async {
+    if (offlineMode.value) return false;
+
+    final baseSong =
+        _getLastPlayedYouTubeSong() ??
+        currentSong ??
+        (_historyList.isNotEmpty ? _historyList.first : null);
+    final artist = baseSong?['artist']?.toString().trim() ?? '';
+    final title = baseSong?['title']?.toString().trim() ?? '';
+    final curTitle = title.isNotEmpty ? title : 'Unknown';
+
+    debugPrint(
+      '[PROVIDER TRACE]\n'
+      'CURRENT=$curTitle\n'
+      'STEP=JIOSAAVN\n'
+      'ACTION=SEARCHING',
+    );
+
+    var jiosaavnTracks = <Map<String, dynamic>>[];
+
+    // Strategy 1: "artist songs" — finds genuinely different tracks.
+    if (artist.isNotEmpty) {
+      try {
+        jiosaavnTracks = await JioSaavnService.instance.searchSongs(
+          '$artist songs',
+          limit: 15,
+        );
+      } catch (_) {}
+    }
+
+    // Strategy 2: artist name alone.
+    if (jiosaavnTracks.isEmpty && artist.isNotEmpty) {
+      try {
+        jiosaavnTracks = await JioSaavnService.instance.searchSongs(
+          artist,
+          limit: 15,
+        );
+      } catch (_) {}
+    }
+
+    // Strategy 3: title search as last resort.
+    if (jiosaavnTracks.isEmpty && title.isNotEmpty) {
+      try {
+        jiosaavnTracks = await JioSaavnService.instance.searchSongs(
+          title,
+          limit: 15,
+        );
+      } catch (_) {}
+    }
+
+    if (jiosaavnTracks.isEmpty) {
+      debugPrint(
+        '[JIOSAAVN TRACE]\n'
+        'ENDPOINT=${JioSaavnConfig.baseUrl}\n'
+        'RESULT=FAILED\n'
+        'ERROR=${JioSaavnService.instance.lastError ?? "No tracks found"}\n'
+        'FALLBACK=JAMENDO',
+      );
+      debugPrint(
+        '[PROVIDER TRACE]\n'
+        'CURRENT=$curTitle\n'
+        'STEP=JIOSAAVN\n'
+        'RESULT=0_VALID\n'
+        'ACTION=TRY_JAMENDO',
+      );
+      return false;
+    }
+
+    // Build an exclusion set of canonical keys already in the queue / history.
+    final existingCanonicalKeys = <String>{
+      for (final s in _queueList)
+        RecommendationEngine.canonicalSongKey(
+          s['title']?.toString() ?? '',
+          s['artist']?.toString() ?? '',
+        ),
+      for (final s in _historyList.take(20))
+        RecommendationEngine.canonicalSongKey(
+          s['title']?.toString() ?? '',
+          s['artist']?.toString() ?? '',
+        ),
+    };
+
+    // Also exclude the compound ytids already seen.
+    final existingYtids = <String>{
+      ..._queueList.map((s) => s['ytid']?.toString() ?? ''),
+      ..._historyList.map((s) => s['ytid']?.toString() ?? ''),
+    };
+
+    var validCount = 0;
+    for (var i = 0; i < jiosaavnTracks.length; i++) {
+      if (i >= 3) break; // Try at most 3 candidates
+
+      final rawTrack = jiosaavnTracks[i];
+
+      // Extract a pre-resolved stream URL from the search response.
+      final preResolvedUrl =
+          JioSaavnService.extractStreamUrlFromSong(rawTrack);
+
+      final songMap = returnJioSaavnSongLayout(
+        i,
+        rawTrack,
+        preResolvedStreamUrl: preResolvedUrl,
+      );
+
+      final jiosaavnYtid = songMap['ytid']?.toString() ?? '';
+      final songTitle = songMap['title']?.toString() ?? '';
+      final songArtist = songMap['artist']?.toString() ?? '';
+
+      // Basic validation.
+      if (jiosaavnYtid.isEmpty || songTitle.isEmpty) continue;
+
+      // Skip if already in queue/history by ytid.
+      if (existingYtids.contains(jiosaavnYtid)) continue;
+
+      // Cross-provider canonical deduplication:
+      // Reject if this song is canonically the same as any queued song
+      // (even if it came from a different provider).
+      final candidateKey = RecommendationEngine.canonicalSongKey(
+        songTitle,
+        songArtist,
+      );
+      if (existingCanonicalKeys.contains(candidateKey)) {
+        debugPrint(
+          '[PROVIDER TRACE]\n'
+          'CURRENT=$curTitle\n'
+          'STEP=JIOSAAVN\n'
+          'CANDIDATE=$songTitle\n'
+          'ACTION=REJECTED_CANONICAL_DUPLICATE',
+        );
+        continue;
+      }
+
+      // Music title filter: reuse the existing song-validity predicate.
+      if (!_isLikelySong(songTitle)) continue;
+
+      validCount++;
+
+      debugPrint(
+        '[PROVIDER TRACE]\n'
+        'CURRENT=$curTitle\n'
+        'STEP=JIOSAAVN\n'
+        'CANDIDATE=$songTitle by $songArtist\n'
+        'YTID=$jiosaavnYtid\n'
+        'ACTION=TESTING',
+      );
+
+      final queueSong = _queueEntryIds.createSong(songMap);
+      queueSong['isAutoPicked'] = true;
+      queueSong['isJioSaavnFallback'] = true;
+      final lenBefore = _queueList.length;
+      _queueList.add(queueSong);
+      debugPrint(
+        '[QUEUE TRACE]\n'
+        'SOURCE=jiosaavn-fallback\n'
+        'SOURCE_PROVIDER=jiosaavn\n'
+        'OPERATION=append\n'
+        'QUEUE_LENGTH_BEFORE=$lenBefore\n'
+        'QUEUE_LENGTH_AFTER=${_queueList.length}\n'
+        'CURRENT_INDEX=$_currentQueueIndex\n'
+        'TITLE=$songTitle\n'
+        'ARTIST=$songArtist\n'
+        'YTID=$jiosaavnYtid\n'
+        'CANONICAL_KEY=$candidateKey\n'
+        'CALLER=_tryPlayJioSaavnFallback',
+      );
+      _updateQueueMediaItems();
+
+      final success = await _playFromQueue(
+        _queueList.length - 1,
+        suppressAutoRetry: true,
+      );
+      if (success) {
+        debugPrint(
+          '[JIOSAAVN TRACE]\n'
+          'ENDPOINT=${JioSaavnConfig.baseUrl}\n'
+          'RESULT=SUCCESS\n'
+          'ERROR=none\n'
+          'FALLBACK=NONE',
+        );
+        debugPrint(
+          '[PROVIDER TRACE]\n'
+          'CURRENT=$curTitle\n'
+          'STEP=JIOSAAVN\n'
+          'RESULT=${validCount}_VALID\n'
+          'ACTION=USE_JIOSAAVN\n'
+          'JAMENDO=SKIPPED',
+        );
+        return true;
+      }
+      // Stream failed — remove and try next candidate.
+      debugPrint(
+        '[QUEUE TRACE]\n'
+        'SOURCE=jiosaavn-fallback\n'
+        'OPERATION=remove-last (stream-failed)\n'
+        'QUEUE_LENGTH_BEFORE=${_queueList.length}\n'
+        'QUEUE_LENGTH_AFTER=${_queueList.length - 1}\n'
+        'TITLE=$songTitle\n'
+        'YTID=$jiosaavnYtid\n'
+        'CALLER=_tryPlayJioSaavnFallback-rollback',
+      );
+      _queueList.removeLast();
+      _updateQueueMediaItems();
+    }
+
+    debugPrint(
+      '[JIOSAAVN TRACE]\n'
+      'ENDPOINT=${JioSaavnConfig.baseUrl}\n'
+      'RESULT=FAILED\n'
+      'ERROR=All track playback attempts failed\n'
+      'FALLBACK=JAMENDO',
+    );
+    debugPrint(
+      '[PROVIDER TRACE]\n'
+      'CURRENT=$curTitle\n'
+      'STEP=JIOSAAVN\n'
+      'RESULT=0_VALID\n'
+      'ACTION=TRY_JAMENDO',
+    );
+    return false;
   }
 
   Future<bool> _tryPlayYouTubeRecommendationOrSearch() async {
@@ -2556,14 +2917,54 @@ class MusifyAudioHandler extends BaseAudioHandler {
       if (candidate is Map && !isJamendoId(candidate['ytid']?.toString())) {
         final candidateTitle = candidate['title']?.toString() ?? '';
         debugPrint('[SoundWave AutoNext] CANDIDATE: $candidateTitle');
+        final ctxSongA = _getLastPlayedYouTubeSong() ?? currentSong;
+        final isDuplicateA =
+            ctxSongA != null &&
+            _isCanonicalDuplicate(
+              Map<String, dynamic>.from(candidate),
+              ctxSongA,
+            );
         if (!_isLikelySong(candidateTitle)) {
           debugPrint('[SoundWave AutoNext] REJECTED NON-SONG: $candidateTitle');
+        } else if (ctxSongA != null &&
+            !RecommendationEngine.isValidQueueCandidate(
+              candidate: Map<String, dynamic>.from(candidate),
+              contextSong: Map<String, dynamic>.from(ctxSongA),
+            )) {
+          debugPrint('[SoundWave AutoNext] REJECTED IRRELEVANT/DUPLICATE: $candidateTitle');
+        } else if (isDuplicateA) {
+          debugPrint(
+            '[RECOMMENDATION FILTER]\n'
+            'TITLE=$candidateTitle\n'
+            'ARTIST=${candidate['artist']}\n'
+            'YTID=${candidate['ytid']}\n'
+            'CANONICAL_KEY=${RecommendationEngine.canonicalSongKey(candidateTitle, candidate['artist']?.toString() ?? '')}\n'
+            'CONTEXT_KEY=${RecommendationEngine.canonicalSongKey(ctxSongA['title']?.toString() ?? '', ctxSongA['artist']?.toString() ?? '')}\n'
+            'DECISION=REJECT\n'
+            'REASON=already_in_queue',
+          );
+          debugPrint('[SoundWave AutoNext] REJECTED IRRELEVANT/DUPLICATE: $candidateTitle');
         } else {
           debugPrint('[SoundWave AutoNext] YOUTUBE RECOMMENDATION FOUND: true');
           debugPrint('[SoundWave AutoNext] TESTING SONG: $candidateTitle');
           final queueSong = _queueEntryIds.createSong(candidate);
           queueSong['isAutoPicked'] = true;
+          final _lenBefA = _queueList.length;
           _queueList.add(queueSong);
+          debugPrint(
+            '[QUEUE TRACE]\n'
+            'SOURCE=prefetch-recommendation\n'
+            'OPERATION=append\n'
+            'QUEUE_LENGTH_BEFORE=$_lenBefA\n'
+            'QUEUE_LENGTH_AFTER=${_queueList.length}\n'
+            'CURRENT_INDEX=$_currentQueueIndex\n'
+            'TITLE=$candidateTitle\n'
+            'ARTIST=${candidate["artist"]}\n'
+            'YTID=${candidate["ytid"]}\n'
+            'CANONICAL_KEY=${RecommendationEngine.canonicalSongKey(candidateTitle, candidate["artist"]?.toString() ?? "")}\n'
+            'SEARCH_QUERY=prefetch\n'
+            'CALLER=_tryPlayYouTubeRecommendationOrSearch(A)',
+          );
           _updateQueueMediaItems();
           final success = await _playFromQueue(
             _queueList.length - 1,
@@ -2575,6 +2976,20 @@ class MusifyAudioHandler extends BaseAudioHandler {
             );
             return true;
           }
+          debugPrint(
+            '[QUEUE TRACE]\n'
+            'SOURCE=prefetch-recommendation\n'
+            'OPERATION=remove-last (stream-failed)\n'
+            'QUEUE_LENGTH_BEFORE=${_queueList.length}\n'
+            'QUEUE_LENGTH_AFTER=${_queueList.length - 1}\n'
+            'CURRENT_INDEX=$_currentQueueIndex\n'
+            'TITLE=$candidateTitle\n'
+            'ARTIST=${candidate["artist"]}\n'
+            'YTID=${candidate["ytid"]}\n'
+            'CANONICAL_KEY=${RecommendationEngine.canonicalSongKey(candidateTitle, candidate["artist"]?.toString() ?? "")}\n'
+            'SEARCH_QUERY=prefetch\n'
+            'CALLER=_tryPlayYouTubeRecommendationOrSearch(A-rollback)',
+          );
           _queueList.removeLast();
           _updateQueueMediaItems();
           debugPrint(
@@ -2630,16 +3045,58 @@ class MusifyAudioHandler extends BaseAudioHandler {
                 continue;
               }
 
+              final songLayoutPreview = returnSongLayout(0, video);
+              if (!RecommendationEngine.isValidQueueCandidate(
+                    candidate: songLayoutPreview,
+                    contextSong: Map<String, dynamic>.from(baseSong),
+                  )) {
+                debugPrint(
+                  '[SoundWave AutoNext] REJECTED IRRELEVANT/DUPLICATE: $videoTitle',
+                );
+                continue;
+              }
+              if (_isCanonicalDuplicate(songLayoutPreview, baseSong)) {
+                debugPrint(
+                  '[RECOMMENDATION FILTER]\n'
+                  'TITLE=${songLayoutPreview['title']}\n'
+                  'ARTIST=${songLayoutPreview['artist']}\n'
+                  'YTID=${songLayoutPreview['ytid']}\n'
+                  'CANONICAL_KEY=${RecommendationEngine.canonicalSongKey(songLayoutPreview['title']?.toString() ?? '', songLayoutPreview['artist']?.toString() ?? '')}\n'
+                  'CONTEXT_KEY=${RecommendationEngine.canonicalSongKey(baseSong['title']?.toString() ?? '', baseSong['artist']?.toString() ?? '')}\n'
+                  'DECISION=REJECT\n'
+                  'REASON=already_in_queue',
+                );
+                debugPrint(
+                  '[SoundWave AutoNext] REJECTED IRRELEVANT/DUPLICATE: $videoTitle',
+                );
+                continue;
+              }
+
               triedCount++;
               if (triedCount > 3) break;
 
               debugPrint(
                 '[SoundWave AutoNext] TESTING SONG $triedCount: $videoTitle ($vidId)',
               );
-              final songLayout = returnSongLayout(0, video);
+              final songLayout = songLayoutPreview;
               final queueSong = _queueEntryIds.createSong(songLayout);
               queueSong['isAutoPicked'] = true;
+              final _lenBefB = _queueList.length;
               _queueList.add(queueSong);
+              debugPrint(
+                '[QUEUE TRACE]\n'
+                'SOURCE=related-video\n'
+                'OPERATION=append\n'
+                'QUEUE_LENGTH_BEFORE=$_lenBefB\n'
+                'QUEUE_LENGTH_AFTER=${_queueList.length}\n'
+                'CURRENT_INDEX=$_currentQueueIndex\n'
+                'TITLE=$videoTitle\n'
+                'ARTIST=${songLayout["artist"]}\n'
+                'YTID=$vidId\n'
+                'CANONICAL_KEY=${RecommendationEngine.canonicalSongKey(videoTitle, songLayout["artist"]?.toString() ?? "")}\n'
+                'SEARCH_QUERY=related-videos\n'
+                'CALLER=_tryPlayYouTubeRecommendationOrSearch(B)',
+              );
               _updateQueueMediaItems();
 
               final success = await _playFromQueue(
@@ -2652,6 +3109,20 @@ class MusifyAudioHandler extends BaseAudioHandler {
                 );
                 return true;
               }
+              debugPrint(
+                '[QUEUE TRACE]\n'
+                'SOURCE=related-video\n'
+                'OPERATION=remove-last (stream-failed)\n'
+                'QUEUE_LENGTH_BEFORE=${_queueList.length}\n'
+                'QUEUE_LENGTH_AFTER=${_queueList.length - 1}\n'
+                'CURRENT_INDEX=$_currentQueueIndex\n'
+                'TITLE=$videoTitle\n'
+                'ARTIST=${songLayout["artist"]}\n'
+                'YTID=$vidId\n'
+                'CANONICAL_KEY=${RecommendationEngine.canonicalSongKey(videoTitle, songLayout["artist"]?.toString() ?? "")}\n'
+                'SEARCH_QUERY=related-videos\n'
+                'CALLER=_tryPlayYouTubeRecommendationOrSearch(B-rollback)',
+              );
               _queueList.removeLast();
               _updateQueueMediaItems();
               debugPrint(
@@ -2674,10 +3145,16 @@ class MusifyAudioHandler extends BaseAudioHandler {
     }
 
     // C. New YouTube search result
+    // CRITICAL FIX: Search for "$artist songs" NOT "$artist $title" — searching
+    // by artist+title floods results with re-uploads of the SAME song
+    // (e.g. "Shayad Lyrics", "Shayad Reprise", "Shayad Slowed + Reverb").
     debugPrint('[SoundWave AutoNext] TRYING YOUTUBE SEARCH');
-    final queryTitle = baseSong?['title']?.toString() ?? '';
     final queryArtist = baseSong?['artist']?.toString() ?? '';
-    final query = '$queryArtist $queryTitle'.trim();
+    final queryTitle = baseSong?['title']?.toString() ?? '';
+    // Use artist+songs search; fall back to title search only if artist is unknown
+    final query = queryArtist.isNotEmpty
+        ? '$queryArtist songs'
+        : queryTitle.trim();
     if (query.isNotEmpty) {
       try {
         final searchResults = await fetchSongsList(query)
@@ -2711,6 +3188,37 @@ class MusifyAudioHandler extends BaseAudioHandler {
               continue;
             }
 
+            if (baseSong != null) {
+              if (!RecommendationEngine.isValidQueueCandidate(
+                    candidate: Map<String, dynamic>.from(song),
+                    contextSong: Map<String, dynamic>.from(baseSong),
+                  )) {
+                debugPrint(
+                  '[SoundWave AutoNext] REJECTED IRRELEVANT/DUPLICATE: $songTitle',
+                );
+                continue;
+              }
+              if (_isCanonicalDuplicate(
+                    Map<String, dynamic>.from(song),
+                    baseSong,
+                  )) {
+                debugPrint(
+                  '[RECOMMENDATION FILTER]\n'
+                  'TITLE=${song['title']}\n'
+                  'ARTIST=${song['artist']}\n'
+                  'YTID=$ytid\n'
+                  'CANONICAL_KEY=${RecommendationEngine.canonicalSongKey(songTitle, song['artist']?.toString() ?? '')}\n'
+                  'CONTEXT_KEY=${RecommendationEngine.canonicalSongKey(baseSong['title']?.toString() ?? '', baseSong['artist']?.toString() ?? '')}\n'
+                  'DECISION=REJECT\n'
+                  'REASON=already_in_queue',
+                );
+                debugPrint(
+                  '[SoundWave AutoNext] REJECTED IRRELEVANT/DUPLICATE: $songTitle',
+                );
+                continue;
+              }
+            }
+
             triedCount++;
             if (triedCount > 2) break;
 
@@ -2719,7 +3227,22 @@ class MusifyAudioHandler extends BaseAudioHandler {
             );
             final queueSong = _queueEntryIds.createSong(song);
             queueSong['isAutoPicked'] = true;
+            final _lenBefC = _queueList.length;
             _queueList.add(queueSong);
+            debugPrint(
+              '[QUEUE TRACE]\n'
+              'SOURCE=search-fallback\n'
+              'OPERATION=append\n'
+              'QUEUE_LENGTH_BEFORE=$_lenBefC\n'
+              'QUEUE_LENGTH_AFTER=${_queueList.length}\n'
+              'CURRENT_INDEX=$_currentQueueIndex\n'
+              'TITLE=$songTitle\n'
+              'ARTIST=${song["artist"]}\n'
+              'YTID=$ytid\n'
+              'CANONICAL_KEY=${RecommendationEngine.canonicalSongKey(songTitle, song["artist"]?.toString() ?? "")}\n'
+              'SEARCH_QUERY=$query\n'
+              'CALLER=_tryPlayYouTubeRecommendationOrSearch(C)',
+            );
             _updateQueueMediaItems();
 
             final success = await _playFromQueue(
@@ -2732,6 +3255,20 @@ class MusifyAudioHandler extends BaseAudioHandler {
               );
               return true;
             }
+            debugPrint(
+              '[QUEUE TRACE]\n'
+              'SOURCE=search-fallback\n'
+              'OPERATION=remove-last (stream-failed)\n'
+              'QUEUE_LENGTH_BEFORE=${_queueList.length}\n'
+              'QUEUE_LENGTH_AFTER=${_queueList.length - 1}\n'
+              'CURRENT_INDEX=$_currentQueueIndex\n'
+              'TITLE=$songTitle\n'
+              'ARTIST=${song["artist"]}\n'
+              'YTID=$ytid\n'
+              'CANONICAL_KEY=${RecommendationEngine.canonicalSongKey(songTitle, song["artist"]?.toString() ?? "")}\n'
+              'SEARCH_QUERY=$query\n'
+              'CALLER=_tryPlayYouTubeRecommendationOrSearch(C-rollback)',
+            );
             _queueList.removeLast();
             _updateQueueMediaItems();
           }
@@ -2864,30 +3401,32 @@ class MusifyAudioHandler extends BaseAudioHandler {
       debugPrint('[SoundWave AutoNext] CURRENT INDEX: $_currentQueueIndex');
       debugPrint('[SoundWave AutoNext] AUTO NEXT ENABLED: $_autoNextEnabled');
 
-      // 1. YouTube queue: scan ahead in queue for YouTube songs first
+      // STEP 1: Check existing queue.
+      // Scan ahead for any queued song (YouTube-first, then others).
       if (_currentQueueIndex < _queueList.length - 1) {
+        // 1a. YouTube songs first.
         for (var i = _currentQueueIndex + 1; i < _queueList.length; i++) {
           final candidate = _queueList[i];
           final ytid = candidate['ytid']?.toString() ?? '';
-          if (!isJamendoId(ytid)) {
+          if (!_isNonYouTubeId(ytid)) {
             debugPrint(
               '[SoundWave AutoNext] Playing next YouTube song in queue at index $i: ${candidate['title']}',
             );
             final success = await _playFromQueue(i, suppressAutoRetry: true);
             if (success) return;
             debugPrint(
-              '[SoundWave AutoNext] YouTube stream failed for index $i, trying next YouTube option in queue...',
+              '[SoundWave AutoNext] YouTube stream failed for index $i, trying next...',
             );
           }
         }
 
-        // If no YouTube songs ahead in queue, check any other queued songs (e.g. user added)
+        // 1b. Any other queued songs (JioSaavn / Jamendo — user-added).
         for (var i = _currentQueueIndex + 1; i < _queueList.length; i++) {
           final candidate = _queueList[i];
           final ytid = candidate['ytid']?.toString() ?? '';
-          if (isJamendoId(ytid)) {
+          if (_isNonYouTubeId(ytid)) {
             debugPrint(
-              '[SoundWave AutoNext] Playing queued song at index $i: ${candidate['title']}',
+              '[SoundWave AutoNext] Playing queued non-YouTube song at index $i: ${candidate['title']}',
             );
             final success = await _playFromQueue(i, suppressAutoRetry: true);
             if (success) return;
@@ -2895,13 +3434,13 @@ class MusifyAudioHandler extends BaseAudioHandler {
         }
       }
 
-      // If Repeat ALL is active, loop to beginning of queue and check YouTube songs
+      // If Repeat ALL is active, loop to beginning of queue (YouTube only).
       if (repeatNotifier.value == AudioServiceRepeatMode.all &&
           _queueList.isNotEmpty) {
         for (var i = 0; i <= _currentQueueIndex && i < _queueList.length; i++) {
           final candidate = _queueList[i];
           final ytid = candidate['ytid']?.toString() ?? '';
-          if (!isJamendoId(ytid)) {
+          if (!_isNonYouTubeId(ytid)) {
             debugPrint(
               '[SoundWave AutoNext] Repeat ALL -> Playing YouTube song in queue at index $i: ${candidate['title']}',
             );
@@ -2914,6 +3453,7 @@ class MusifyAudioHandler extends BaseAudioHandler {
       debugPrint('[SoundWave AutoNext] QUEUE EXHAUSTED');
 
       if (_autoNextEnabled) {
+        // STEP 2: YouTube provider.
         // 2a. Wait for any in-progress background refill before giving up.
         if (_isRefillInProgress && _currentRefillFuture != null) {
           debugPrint(
@@ -2925,11 +3465,11 @@ class MusifyAudioHandler extends BaseAudioHandler {
           );
         }
 
-        // 2b. Re-scan queue — the background refill may have added items.
+        // 2b. Re-scan queue — the background refill may have added YouTube items.
         for (var i = _currentQueueIndex + 1; i < _queueList.length; i++) {
           final candidate = _queueList[i];
           final ytid = candidate['ytid']?.toString() ?? '';
-          if (!isJamendoId(ytid)) {
+          if (!_isNonYouTubeId(ytid)) {
             debugPrint(
               '[SoundWave AutoNext] Post-refill: playing YouTube song '
               'at index $i: ${candidate['title']}',
@@ -2939,18 +3479,17 @@ class MusifyAudioHandler extends BaseAudioHandler {
           }
         }
 
-        // 2c. If still empty, trigger an immediate synchronous refill.
+        // 2c. Immediate synchronous YouTube refill if queue still empty.
         if (!_isRefillInProgress) {
           debugPrint(
             '[SoundWave AutoNext] Triggering immediate recommendation refill...',
           );
           await _refillRecommendationQueue();
 
-          // Re-scan after immediate refill.
           for (var i = _currentQueueIndex + 1; i < _queueList.length; i++) {
             final candidate = _queueList[i];
             final ytid = candidate['ytid']?.toString() ?? '';
-            if (!isJamendoId(ytid)) {
+            if (!_isNonYouTubeId(ytid)) {
               debugPrint(
                 '[SoundWave AutoNext] Post-immediate-refill: playing YouTube song '
                 'at index $i: ${candidate['title']}',
@@ -2961,18 +3500,82 @@ class MusifyAudioHandler extends BaseAudioHandler {
           }
         }
 
-        // 3. Safety-net: fall back to the single-song YouTube find mechanism.
-        debugPrint('[SoundWave Fallback] ALL YOUTUBE QUEUE OPTIONS EXHAUSTED');
-        final ytSuccess = await _tryPlayYouTubeRecommendationOrSearch();
-        if (ytSuccess) return;
+        // 2d. Safety-net: single-song YouTube search/related-video mechanism.
+        debugPrint(
+          '[PROVIDER TRACE]\n'
+          'CURRENT=$curTitle\n'
+          'STEP=YOUTUBE\n'
+          'ACTION=SEARCHING',
+        );
 
-        // 4. Jamendo fallback (ONLY after all YouTube options exhausted/failed).
-        debugPrint('[SoundWave Fallback] TRYING JAMENDO');
-        final jamendoSuccess = await _tryPlayJamendoFallback();
-        if (jamendoSuccess) return;
+        // Fallback lock: only one resolution operation at a time.
+        if (_isResolvingNextSong) {
+          debugPrint(
+            '[SoundWave AutoNext] Another fallback resolution already running, skipping.',
+          );
+          return;
+        }
+        _isResolvingNextSong = true;
+
+        try {
+          final ytSuccess = await _tryPlayYouTubeRecommendationOrSearch();
+          if (ytSuccess) {
+            debugPrint(
+              '[PROVIDER TRACE]\n'
+              'CURRENT=$curTitle\n'
+              'STEP=YOUTUBE\n'
+              'RESULT=1_VALID\n'
+              'ACTION=USE_YOUTUBE\n'
+              'JIOSAAVN=SKIPPED\n'
+              'JAMENDO=SKIPPED',
+            );
+            return;
+          }
+
+          debugPrint(
+            '[PROVIDER TRACE]\n'
+            'CURRENT=$curTitle\n'
+            'STEP=YOUTUBE\n'
+            'RESULT=0_VALID\n'
+            'ACTION=TRY_JIOSAAVN',
+          );
+
+          // STEP 3: JioSaavn fallback (ONLY if YouTube fully failed).
+          final jiosaavnSuccess = await _tryPlayJioSaavnFallback();
+          if (jiosaavnSuccess) return;
+
+          // STEP 4: Jamendo fallback (ONLY if YouTube and JioSaavn both failed).
+          debugPrint(
+            '[PROVIDER TRACE]\n'
+            'CURRENT=$curTitle\n'
+            'STEP=JAMENDO\n'
+            'ACTION=SEARCHING',
+          );
+          final jamendoSuccess = await _tryPlayJamendoFallback();
+          if (jamendoSuccess) {
+            debugPrint(
+              '[PROVIDER TRACE]\n'
+              'CURRENT=$curTitle\n'
+              'STEP=JAMENDO\n'
+              'RESULT=1_VALID\n'
+              'ACTION=USE_JAMENDO',
+            );
+            return;
+          }
+
+          debugPrint(
+            '[PROVIDER TRACE]\n'
+            'CURRENT=$curTitle\n'
+            'STEP=JAMENDO\n'
+            'RESULT=0_VALID\n'
+            'ACTION=NO_SONG',
+          );
+        } finally {
+          _isResolvingNextSong = false;
+        }
       }
 
-      // 5. If all failed or auto-play disabled: STOP
+      // All failed or auto-play disabled: STOP
       debugPrint(
         '[SoundWave AutoNext] All sources exhausted or auto-play off -> STOP',
       );

@@ -30,7 +30,8 @@ import 'package:soundwave/main.dart';
 import 'package:soundwave/services/router_service.dart';
 import 'package:soundwave/services/settings_manager.dart';
 import 'package:soundwave/utilities/app_utils.dart';
-import 'package:soundwave/utilities/formatter.dart' show isJamendoId;
+import 'package:soundwave/utilities/formatter.dart'
+    show isJamendoId, isJioSaavnId;
 import 'package:soundwave/widgets/now_playing/marquee_text_widget.dart';
 import 'package:soundwave/widgets/playback_icon_button.dart';
 import 'package:soundwave/widgets/position_slider.dart';
@@ -111,7 +112,29 @@ class NowPlayingControls extends StatelessWidget {
                         fontWeight: FontWeight.w500,
                       ),
                     ),
-                  if (isJamendoId(
+                  if (isJioSaavnId(
+                    metadata.extras?['ytid']?.toString() ?? metadata.id,
+                  )) ...[
+                    const SizedBox(height: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        'Source: JioSaavn',
+                        style: TextStyle(
+                          fontSize: 11 * fontScale,
+                          fontWeight: FontWeight.w500,
+                          color: colorScheme.primary,
+                        ),
+                      ),
+                    ),
+                  ] else if (isJamendoId(
                     metadata.extras?['ytid']?.toString() ?? metadata.id,
                   )) ...[
                     const SizedBox(height: 4),

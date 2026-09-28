@@ -63,7 +63,9 @@ extension StringUtility on String {
     }
 
     final parts = split(':');
-    assert(parts.length <= 3);
+    if (parts.length > 3 || parts.isEmpty) {
+      return null;
+    }
 
     try {
       if (parts.length == 1) {
@@ -86,8 +88,7 @@ extension StringUtility on String {
       return null;
     }
 
-    // Shouldn't reach here.
-    throw StateError('Invalid duration parts');
+    return null;
   }
 
   DateTime parseDateTime() => DateTime.parse(this);
@@ -166,40 +167,46 @@ extension StringUtility2 on String? {
     return false;
   }
 
-  /// Format: {quantity} {unit} ago (5 years ago)
+  /// Format: {quantity} {unit} ago (5 years ago), "Streamed 2 days ago", etc.
   DateTime? toDateTime() {
     if (this == null) {
       return null;
     }
 
-    var parts = this!.trim().split(' ');
-    if (parts.length == 4) {
-      // Streamed x y ago
-      parts = parts.skip(1).toList();
-    }
+    try {
+      final raw = this!.trim();
+      final regex = RegExp(
+        r'(\d+)\s+(second|minute|hour|day|week|month|year)s?',
+        caseSensitive: false,
+      );
+      final match = regex.firstMatch(raw);
+      if (match == null) {
+        return null;
+      }
 
-    if (parts.length != 3) {
+      final qty = int.tryParse(match.group(1) ?? '');
+      if (qty == null) {
+        return null;
+      }
+
+      final unit = match.group(2)?.toLowerCase() ?? '';
+
+      final time = switch (unit) {
+        _ when unit.startsWith('second') => Duration(seconds: qty),
+        _ when unit.startsWith('minute') => Duration(minutes: qty),
+        _ when unit.startsWith('hour') => Duration(hours: qty),
+        _ when unit.startsWith('day') => Duration(days: qty),
+        _ when unit.startsWith('week') => Duration(days: qty * 7),
+        _ when unit.startsWith('month') => Duration(days: qty * 30),
+        _ when unit.startsWith('year') => Duration(days: qty * 365),
+        _ => null,
+      };
+
+      if (time == null) return null;
+      return DateTime.now().subtract(time);
+    } catch (_) {
       return null;
     }
-
-    final qty = int.parse(parts.first);
-
-    // Try to get the unit
-    final unit = parts[1];
-
-    final time = switch (unit) {
-      _ when unit.startsWith('second') => Duration(seconds: qty),
-      _ when unit.startsWith('minute') => Duration(minutes: qty),
-      _ when unit.startsWith('hour') => Duration(hours: qty),
-      _ when unit.startsWith('day') => Duration(days: qty),
-      _ when unit.startsWith('week') => Duration(days: qty * 7),
-      _ when unit.startsWith('month') => Duration(days: qty * 30),
-      _ when unit.startsWith('year') => Duration(days: qty * 365),
-      _ => throw StateError("Couldn't parse $unit unit of time. "
-          'Please report this to the project page!')
-    };
-
-    return DateTime.now().subtract(time);
   }
 
   Uri? toUri() {
