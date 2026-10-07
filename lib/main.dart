@@ -42,6 +42,7 @@ import 'package:soundwave/services/playlist_sharing.dart';
 import 'package:soundwave/services/playlists_manager.dart';
 import 'package:soundwave/services/router_service.dart';
 import 'package:soundwave/services/settings_manager.dart';
+import 'package:soundwave/services/song_event_logger.dart';
 import 'package:soundwave/services/update_manager.dart';
 import 'package:soundwave/theme/app_themes.dart';
 import 'package:soundwave/utilities/flutter_toast.dart';
@@ -282,7 +283,11 @@ Future<void> initialisation() async {
       Hive.openBox('user'),
       Hive.openBox('userNoBackup'),
       Hive.openBox('cache'),
+      Hive.openBox('rec_events'),
     ]);
+
+    // Initialise the recommendation event logger (purges events > 90 days old).
+    unawaited(songEventLogger.init());
 
     audioHandler = await AudioService.init(
       builder: MusifyAudioHandler.new,

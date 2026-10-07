@@ -66,6 +66,15 @@ class NavigationManager {
           );
         },
       ),
+      GoRoute(
+        path: '/playlist/:playlistId',
+        redirect: (context, state) {
+          final playlistId = state.pathParameters['playlistId'] ?? '';
+          final query = state.uri.query;
+          final queryString = query.isNotEmpty ? '?$query' : '';
+          return '/home/playlist/$playlistId$queryString';
+        },
+      ),
       StatefulShellRoute.indexedStack(
         parentNavigatorKey: parentNavigatorKey,
         branches: _getRouteBranches(),
@@ -231,18 +240,7 @@ class NavigationManager {
                 pageBuilder: (context, state) =>
                     _pushPage(child: const LibraryPage(), state: state),
               ),
-              GoRoute(
-                path: 'playlist/:playlistId',
-                pageBuilder: (context, state) => _pushPage(
-                  child: PlaylistPage(
-                    playlistId: _decodePathParameter(
-                      state.pathParameters['playlistId'],
-                    ),
-                    playlistData: _extraAsMap(state.extra),
-                  ),
-                  state: state,
-                ),
-              ),
+              _playlistRoute(),
               _artistRoute(),
               _albumRoute(),
               GoRoute(
@@ -278,7 +276,7 @@ class NavigationManager {
                 state: state,
               );
             },
-            routes: [_artistRoute(), _albumRoute()],
+            routes: [_artistRoute(), _albumRoute(), _playlistRoute()],
           ),
         ],
       ),
@@ -303,6 +301,7 @@ class NavigationManager {
               ),
               _artistRoute(),
               _albumRoute(),
+              _playlistRoute(),
               GoRoute(
                 path: 'radioStations',
                 pageBuilder: (context, state) =>
@@ -402,6 +401,23 @@ class NavigationManager {
     );
   }
 
+  /// The playlist page, inside the tab it was opened from.
+  GoRoute _playlistRoute() {
+    return GoRoute(
+      path: 'playlist/:playlistId',
+      pageBuilder: (context, state) => _pushPage(
+        child: PlaylistPage(
+          playlistId: _decodePathParameter(
+            state.pathParameters['playlistId'],
+          ),
+          playlistData: _extraAsMap(state.extra),
+          provider: state.uri.queryParameters['provider'],
+        ),
+        state: state,
+      ),
+    );
+  }
+
   /// Path of the page of an artist, inside the tab [context] belongs to.
   static String artistPath(BuildContext context, String artistId) =>
       '${basePathFor(context)}/artist/${Uri.encodeComponent(artistId)}';
@@ -415,8 +431,18 @@ class NavigationManager {
       '${basePathFor(context)}/album/${Uri.encodeComponent(albumId)}';
 
   /// Path of the playlist page, inside the tab [context] belongs to.
-  static String playlistPath(BuildContext context, String playlistId) =>
-      '${basePathFor(context)}/playlist/${Uri.encodeComponent(playlistId)}';
+  static String playlistPath(
+    BuildContext context,
+    String playlistId, {
+    String? provider,
+  }) {
+    final base =
+        '${basePathFor(context)}/playlist/${Uri.encodeComponent(playlistId)}';
+    if (provider != null && provider.isNotEmpty) {
+      return '$base?provider=${Uri.encodeComponent(provider)}';
+    }
+    return base;
+  }
 
   /// The tab a sub page pushed from [context] belongs to, so that artists,
   /// albums and playlists stay inside the tab they were opened from.

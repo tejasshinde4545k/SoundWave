@@ -19,6 +19,7 @@
  *     please visit: https://github.com/tejasshinde4545k/SoundWave
  */
 
+// ignore_for_file: avoid_print
 import 'dart:async';
 
 import 'package:fluentui_system_icons/fluentui_system_icons.dart';
@@ -28,6 +29,7 @@ import 'package:soundwave/extensions/l10n.dart';
 import 'package:soundwave/services/artist_service.dart';
 import 'package:soundwave/services/common_services.dart';
 import 'package:soundwave/services/data_manager.dart';
+import 'package:soundwave/services/music_source.dart';
 import 'package:soundwave/services/playlists_manager.dart';
 import 'package:soundwave/services/router_service.dart';
 import 'package:soundwave/utilities/artwork_provider.dart';
@@ -530,6 +532,42 @@ class PlaylistBar extends StatelessWidget {
     );
   }
 
+  String _determinePlaylistProvider(dynamic data, String playlistId) {
+    if (data is Map) {
+      final prov = data['provider'];
+      if (prov is MusicProviderType) return prov.name.toLowerCase();
+      if (prov is String && prov.isNotEmpty) {
+        final lower = prov.toLowerCase();
+        if (lower == 'jiosaavn') return 'jiosaavn';
+        return lower;
+      }
+
+      final src = data['source'];
+      if (src is String && src.isNotEmpty) {
+        final lower = src.toLowerCase();
+        if (lower == 'user-youtube' || lower == 'youtube') return 'youtube';
+        if (lower == 'railway') return 'railway';
+        if (lower == 'jiosaavn') return 'jiosaavn';
+        if (lower == 'jamendo') return 'jamendo';
+        if (lower == 'user-created') return 'youtube';
+      }
+    }
+
+    if (playlistId.startsWith('railway:')) return 'railway';
+    if (playlistId.startsWith('jiosaavn:')) return 'jiosaavn';
+    if (playlistId.startsWith('jamendo:')) return 'jamendo';
+    if (playlistId.startsWith('PL') ||
+        playlistId.startsWith('UU') ||
+        playlistId.startsWith('OLAK5uy_') ||
+        playlistId.startsWith('RD') ||
+        playlistId.startsWith('MPREb_') ||
+        playlistId.startsWith('VL')) {
+      return 'youtube';
+    }
+
+    return selectedMusicSource.value.name.toLowerCase();
+  }
+
   VoidCallback? _getDefaultOnPressed(
     BuildContext context,
     Map<dynamic, dynamic>? updatedPlaylist,
@@ -558,9 +596,31 @@ class PlaylistBar extends StatelessWidget {
         return;
       }
 
+      final rawData = updatedPlaylist ?? playlistData;
+      final providerName = _determinePlaylistProvider(rawData, _resolvedPlaylistId!);
+
+      if (providerName == 'jiosaavn' || providerName == 'jamendo') {
+        showToast(context, 'Playlists are not supported by this provider.');
+        return;
+      }
+
+      final route = NavigationManager.playlistPath(
+        context,
+        _resolvedPlaylistId!,
+        provider: providerName,
+      );
+
+      print(
+        '[PLAYLIST_NAVIGATION]\n'
+        'provider=$providerName\n'
+        'playlistId=$_resolvedPlaylistId\n'
+        'title=$playlistTitle\n'
+        'route=$route',
+      );
+
       context.push(
-        NavigationManager.playlistPath(context, _resolvedPlaylistId!),
-        extra: updatedPlaylist ?? playlistData,
+        route,
+        extra: rawData,
       );
     };
   }

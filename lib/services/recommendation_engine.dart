@@ -101,12 +101,10 @@ class RecommendationEngine {
     } else {
       rawCandidates = await _fetchAllCandidates(currentSong, excludeIds);
       if (rawCandidates.isNotEmpty) {
-        // Strip internal score key before caching so the same entry is
-        // re-usable across callers with different exclude sets.
-        final toCache = rawCandidates
-            .map((c) => Map<String, dynamic>.from(c)..remove(_scoreKey))
-            .toList();
-        RecommendationCache.instance.put(ytid, toCache);
+        // Cache raw candidates with their source base scores intact so that
+        // rankCandidates can distinguish a strong related-video match (50)
+        // from a weaker search result (30/20) on cache hit.
+        RecommendationCache.instance.put(ytid, rawCandidates);
       }
     }
 
@@ -163,15 +161,8 @@ class RecommendationEngine {
     String? regionCode,
     UserMusicProfile? userProfile,
   }) {
-    var effectiveRegion = regionCode ?? 'GLOBAL';
-    if (regionCode == null) {
-      try {
-        effectiveRegion = MusicRegionService.instance.getActiveRegionCode();
-      } catch (_) {}
-    }
-
-    var profile =
-        userProfile ??
+    final effectiveRegion = regionCode?.toUpperCase() ?? 'GLOBAL';
+    final profile = userProfile ??
         const UserMusicProfile(
           isColdStart: true,
           totalSampledSongs: 0,
@@ -181,14 +172,6 @@ class RecommendationEngine {
           isKPopHeavy: false,
           isIndianHeavy: false,
         );
-    if (userProfile == null) {
-      try {
-        profile = MusicRegionService.instance.analyzeUserProfile(
-          recentlyPlayed: userRecentlyPlayed.value,
-          likedSongs: userLikedSongsList.value,
-        );
-      } catch (_) {}
-    }
 
     final scores = <String, double>{};
     final songMap = <String, Map<String, dynamic>>{};
@@ -211,7 +194,7 @@ class RecommendationEngine {
         continue;
       }
       final title = c['title']?.toString() ?? '';
-      if (!isLikelySong(title, isLive: c['isLive'] == true)) continue;
+      if (!isLikelySong(title, isLive: _isLiveCandidate(c))) continue;
       if (contextSong != null &&
           !isValidQueueCandidate(candidate: c, contextSong: contextSong)) {
         continue;
@@ -353,7 +336,7 @@ class RecommendationEngine {
         final id = v.id.value;
         if (excludeIds.contains(id)) continue;
         if (v.isLive) continue;
-        if (!isLikelySong(v.title)) continue;
+        if (!isLikelySong(v.title, isLive: v.isLive)) continue;
         if (acceptCount >= _maxRelatedCandidates) break;
 
         final song = Map<String, dynamic>.from(returnSongLayout(0, v));
@@ -392,7 +375,7 @@ class RecommendationEngine {
         if (id.isEmpty || id.startsWith('jamendo:')) continue;
         if (excludeIds.contains(id)) continue;
         final title = item['title']?.toString() ?? '';
-        if (!isLikelySong(title, isLive: item['isLive'] == true)) continue;
+        if (!isLikelySong(title, isLive: _isLiveCandidate(item))) continue;
         if (acceptCount >= maxResults) break;
 
         final song = Map<String, dynamic>.from(item);
@@ -411,6 +394,18 @@ class RecommendationEngine {
       return [];
     }
   }
+  // ── isLive normalization ────────────────────────────────────────────────────
+
+  /// Returns the live-stream flag from a candidate map, normalizing across
+  /// different key formats that may come from different data sources.
+  static bool _isLiveCandidate(Map candidate) {
+    final raw = candidate['isLive'] ?? candidate['is_live'] ?? candidate['live'];
+    if (raw is bool) return raw;
+    if (raw is int) return raw == 1;
+    if (raw is String) return raw.toLowerCase() == 'true';
+    return false;
+  }
+
   // ── Queue relevance gate ─────────────────────────────────────────────────────
 
   /// Returns true when [candidateTitle] is a variant/re-upload of [contextTitle].
@@ -427,7 +422,7 @@ class RecommendationEngine {
       'acoustic|reprise|slowed|reverb|lofi|lo.fi|extended|remastered|'
       'unplugged|instrumental|karaoke|version|feat.?|ft.?|'
       'lockdown|quarantine|studio|live|concert|performance|'
-      'recreation|recreation|slow|sped.?up|nightcore|'
+      'recreation|slow|sped.?up|nightcore|'
       r'piano|violin|guitar|flute|tribute)\b.*$',
       caseSensitive: false,
     );
@@ -507,7 +502,7 @@ class RecommendationEngine {
       caseSensitive: false,
     );
     if (nonMusicExtra.hasMatch(title) ||
-        !isLikelySong(title, isLive: candidate['isLive'] == true)) {
+        !isLikelySong(title, isLive: _isLiveCandidate(candidate))) {
       logDecision('REJECT', 'non_music_content');
       return false;
     }

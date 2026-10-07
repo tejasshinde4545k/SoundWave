@@ -32,6 +32,7 @@ import 'package:soundwave/services/artist_image_resolver.dart';
 import 'package:soundwave/services/best_artists_service.dart';
 import 'package:soundwave/services/common_services.dart';
 import 'package:soundwave/services/listening_stats_service.dart';
+import 'package:soundwave/services/music_source.dart';
 import 'package:soundwave/services/playlists_manager.dart';
 import 'package:soundwave/services/release_metadata_service.dart';
 import 'package:soundwave/services/router_service.dart';
@@ -43,6 +44,7 @@ import 'package:soundwave/utilities/listening_stats_utils.dart';
 import 'package:soundwave/widgets/announcement_box.dart';
 import 'package:soundwave/widgets/listening_recap_card.dart';
 import 'package:soundwave/widgets/mini_player_bottom_space.dart';
+import 'package:soundwave/widgets/music_source_selector.dart';
 import 'package:soundwave/widgets/no_artwork_cube.dart';
 import 'package:soundwave/widgets/playlist_cube.dart';
 
@@ -80,12 +82,13 @@ class _HomePageState extends State<HomePage> {
       playlistsNum: recommendedCubesNumber,
     );
     _recommendedSongsFuture = getRecommendedSongs();
-    _releasedThisWeekFuture =
-        ReleaseMetadataService.instance.getReleasesThisWeek();
+    _releasedThisWeekFuture = ReleaseMetadataService.instance
+        .getReleasesThisWeek();
     _bestArtistsFuture = BestArtistsService.instance.getBestArtists();
     externalRecommendations.addListener(_refreshRecommendedSongs);
     musicRegionSetting.addListener(_refreshRecommendedSongs);
     userRecentlyPlayed.addListener(_onRecentsChanged);
+    selectedMusicSource.addListener(_onProviderChanged);
     _resolveFeaturedArtist();
   }
 
@@ -94,6 +97,7 @@ class _HomePageState extends State<HomePage> {
     externalRecommendations.removeListener(_refreshRecommendedSongs);
     musicRegionSetting.removeListener(_refreshRecommendedSongs);
     userRecentlyPlayed.removeListener(_onRecentsChanged);
+    selectedMusicSource.removeListener(_onProviderChanged);
     super.dispose();
   }
 
@@ -101,6 +105,22 @@ class _HomePageState extends State<HomePage> {
     if (!_isArtistResolved && mounted) {
       _resolveFeaturedArtist();
     }
+  }
+
+  void _onProviderChanged() {
+    if (!mounted) return;
+    setState(() {
+      _recommendedSongsFuture = getRecommendedSongs();
+      _releasedThisWeekFuture = ReleaseMetadataService.instance
+          .getReleasesThisWeek(forceRefresh: true);
+      _bestArtistsFuture = BestArtistsService.instance.getBestArtists(
+        forceRefresh: true,
+      );
+      _featuredArtistSongsFuture = fetchSongsList(
+        '$_featuredArtistName songs',
+        source: selectedMusicSource.value,
+      );
+    });
   }
 
   void _resolveFeaturedArtist() {
@@ -152,8 +172,9 @@ class _HomePageState extends State<HomePage> {
         if (candidateArtist.isNotEmpty &&
             !ArtistImageResolver.isRecordLabelOrChannel(candidateArtist)) {
           resolvedArtist = candidateArtist;
-          resolvedImage = ArtistImageResolver.instance
-              .getCuratedOrCachedImage(candidateArtist);
+          resolvedImage = ArtistImageResolver.instance.getCuratedOrCachedImage(
+            candidateArtist,
+          );
           break;
         }
       }
@@ -190,8 +211,9 @@ class _HomePageState extends State<HomePage> {
       _recommendedSongsFuture = getRecommendedSongs();
       _releasedThisWeekFuture = ReleaseMetadataService.instance
           .getReleasesThisWeek(forceRefresh: true);
-      _bestArtistsFuture =
-          BestArtistsService.instance.getBestArtists(forceRefresh: true);
+      _bestArtistsFuture = BestArtistsService.instance.getBestArtists(
+        forceRefresh: true,
+      );
     });
   }
 
@@ -227,6 +249,15 @@ class _HomePageState extends State<HomePage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: MusicSourceSelector(
+                onSelected: (source) async {
+                  await setMusicSource(source);
+                },
+              ),
+            ),
+            const SizedBox(height: 8),
             _buildCategoryFilters(colorScheme),
             const SizedBox(height: 6),
 
@@ -1619,7 +1650,8 @@ class _HorizontalArtistCardState extends State<_HorizontalArtistCard> {
   @override
   void initState() {
     super.initState();
-    _effectiveImageUrl = (widget.imageUrl != null && widget.imageUrl!.isNotEmpty)
+    _effectiveImageUrl =
+        (widget.imageUrl != null && widget.imageUrl!.isNotEmpty)
         ? widget.imageUrl
         : ArtistImageResolver.instance.getCachedImage(widget.name);
 
@@ -1631,8 +1663,10 @@ class _HorizontalArtistCardState extends State<_HorizontalArtistCard> {
   @override
   void didUpdateWidget(covariant _HorizontalArtistCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.imageUrl != oldWidget.imageUrl || widget.name != oldWidget.name) {
-      _effectiveImageUrl = (widget.imageUrl != null && widget.imageUrl!.isNotEmpty)
+    if (widget.imageUrl != oldWidget.imageUrl ||
+        widget.name != oldWidget.name) {
+      _effectiveImageUrl =
+          (widget.imageUrl != null && widget.imageUrl!.isNotEmpty)
           ? widget.imageUrl
           : ArtistImageResolver.instance.getCachedImage(widget.name);
       if (_effectiveImageUrl == null || _effectiveImageUrl!.isEmpty) {
@@ -1645,8 +1679,9 @@ class _HorizontalArtistCardState extends State<_HorizontalArtistCard> {
     if (_isResolving) return;
     _isResolving = true;
     try {
-      final img =
-          await ArtistImageResolver.instance.resolveArtistImage(widget.name);
+      final img = await ArtistImageResolver.instance.resolveArtistImage(
+        widget.name,
+      );
       if (mounted && img != null && img.isNotEmpty) {
         setState(() {
           _effectiveImageUrl = img;
@@ -1696,22 +1731,28 @@ class _HorizontalArtistCardState extends State<_HorizontalArtistCard> {
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withValues(alpha: isHighlighted ? 0.14 : 0.07),
+                        color: Colors.black.withValues(
+                          alpha: isHighlighted ? 0.14 : 0.07,
+                        ),
                         blurRadius: isHighlighted ? 10 : 6,
                         offset: const Offset(0, 2),
                       ),
                     ],
                   ),
                   child: ClipOval(
-                    child: (_effectiveImageUrl != null &&
-                            ArtistImageResolver.isValidArtistImageUrl(_effectiveImageUrl))
+                    child:
+                        (_effectiveImageUrl != null &&
+                            ArtistImageResolver.isValidArtistImageUrl(
+                              _effectiveImageUrl,
+                            ))
                         ? CachedNetworkImage(
                             imageUrl: _effectiveImageUrl!,
                             fit: BoxFit.cover,
                             width: widget.avatarSize,
                             height: widget.avatarSize,
                             placeholder: (_, __) => _buildFallback(colorScheme),
-                            errorWidget: (_, __, ___) => _buildFallback(colorScheme),
+                            errorWidget: (_, __, ___) =>
+                                _buildFallback(colorScheme),
                           )
                         : _buildFallback(colorScheme),
                   ),

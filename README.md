@@ -119,6 +119,35 @@ flutter pub get
 flutter run
 ```
 
+### Railway music client
+
+The Railway-backed client is isolated under [`lib/railway_api/`](lib/railway_api/).
+It is a provider-independent second application data boundary:
+
+```text
+UI -> MusicRepository -> RailwayMusicApi -> ApiClient -> Railway API
+```
+
+Use `MusicRepository` from UI code rather than constructing URLs or decoding
+Railway JSON in widgets. Stream URLs are requested only when playback starts,
+are never persisted, and are refreshed once if playback fails. Stable metadata
+is cached in the `railway_music_cache` Hive box and can be served while offline.
+
+Railway Music is integrated into the existing SoundWave app. Select
+`Railway Music` from the global provider selector on Home or Search:
+
+```bash
+flutter run --flavor github
+```
+
+It uses the existing `audio_service` Android integration for background
+playback, lock-screen actions, notification controls, seeking, and queue
+navigation.
+
+The regular SoundWave entrypoint also uses Railway as the primary song search
+and stream source. Existing YouTube and Jamendo sources remain available as
+fallbacks for compatibility.
+
 ---
 
 ## Contributing

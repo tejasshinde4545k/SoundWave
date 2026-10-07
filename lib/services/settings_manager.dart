@@ -24,6 +24,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:soundwave/screens/playlist_page.dart';
 import 'package:soundwave/screens/user_songs_page.dart';
+import 'package:soundwave/services/music_source.dart';
 import 'package:soundwave/utilities/language_utils.dart';
 
 // Preferences
@@ -50,6 +51,13 @@ final offlineMode = ValueNotifier<bool>(
 
 final wrappedEnabled = ValueNotifier<bool>(
   Hive.box('settings').get('wrappedEnabled', defaultValue: true),
+);
+
+/// Controls whether user-song interaction events are logged for the
+/// personalised recommendation ML pipeline. Defaults to false (opt-in).
+/// Matches the consent requirement in PROMPT_RECOMMENDATION_SYSTEM.md §2.3.
+final recEventLoggingEnabled = ValueNotifier<bool>(
+  Hive.box('settings').get('recEventLoggingEnabled', defaultValue: false),
 );
 
 final sponsorBlockSupport = ValueNotifier<bool>(
@@ -130,6 +138,14 @@ final announcementURL = ValueNotifier<String?>(null);
 void reloadSettingsFromStorage() {
   final settings = Hive.box('settings');
 
+  selectedMusicSource.value = MusicSource.values.firstWhere(
+    (source) => source.storageValue == settings.get(
+      'music_source',
+      defaultValue: MusicSource.youtube.storageValue,
+    ),
+    orElse: () => MusicSource.youtube,
+  );
+
   shouldWeCheckUpdates.value = settings.get(
     'shouldWeCheckUpdates',
     defaultValue: null,
@@ -145,6 +161,10 @@ void reloadSettingsFromStorage() {
   );
   offlineMode.value = settings.get('offlineMode', defaultValue: false);
   wrappedEnabled.value = settings.get('wrappedEnabled', defaultValue: true);
+  recEventLoggingEnabled.value = settings.get(
+    'recEventLoggingEnabled',
+    defaultValue: false,
+  );
   sponsorBlockSupport.value = settings.get(
     'sponsorBlockSupport',
     defaultValue: false,

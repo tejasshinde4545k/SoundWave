@@ -30,6 +30,7 @@ import 'package:soundwave/main.dart' show logger;
 import 'package:soundwave/services/artist_service.dart';
 import 'package:soundwave/services/common_services.dart';
 import 'package:soundwave/services/data_manager.dart';
+import 'package:soundwave/services/music_source.dart';
 import 'package:soundwave/services/playlist_download_service.dart';
 import 'package:soundwave/services/proxy_manager.dart';
 import 'package:soundwave/services/settings_manager.dart';
@@ -1037,10 +1038,47 @@ Future<Map?> getPlaylistInfoForWidget(
   String? sourceVideoAuthor,
   bool preferredVerified = false,
   bool forceRefresh = false,
+  String? provider,
 }) async {
   if (id == null) return null;
   final normalizedId = id.toString().trim();
   if (normalizedId.isEmpty || normalizedId == 'null') return null;
+
+  final isRailway = provider == 'railway' ||
+      normalizedId.startsWith('railway:') ||
+      (id is Map && id['source'] == 'railway');
+
+  if (isRailway) {
+    final seokey = normalizedId.startsWith('railway:')
+        ? normalizedId.substring('railway:'.length)
+        : normalizedId;
+    try {
+      final railwayPlaylist = await railwayMusicRepository.playlist(seokey);
+      return {
+        'ytid': 'railway:${railwayPlaylist.id}',
+        'title': railwayPlaylist.title,
+        'image': railwayPlaylist.artworkUrl,
+        'source': 'railway',
+        'provider': MusicProviderType.railway,
+        'list': railwayPlaylist.tracks.asMap().entries.map((entry) {
+          return returnRailwaySongLayout(entry.key, entry.value.toJson());
+        }).toList(),
+      };
+    } catch (e, st) {
+      logger.log(
+        'Error fetching Railway playlist $seokey',
+        error: e,
+        stackTrace: st,
+      );
+      return null;
+    }
+  }
+
+  if (provider == 'jiosaavn' || provider == 'jamendo') {
+    logger.log('Playlists are not supported for provider $provider');
+    return null;
+  }
+
   if (normalizedId == 'recommended') {
     final songs = await getRecommendedSongs();
     return {
@@ -1256,6 +1294,33 @@ Future<List> getSongsFromPlaylist(
 Future updatePlaylistList(BuildContext context, String playlistId) async {
   final normalizedId = _playlistId(playlistId);
   if (normalizedId == null) return null;
+
+  if (normalizedId.startsWith('railway:')) {
+    final seokey = normalizedId.substring('railway:'.length);
+    try {
+      final railwayPlaylist = await railwayMusicRepository.playlist(seokey);
+      final songList = railwayPlaylist.tracks.asMap().entries.map((entry) {
+        return returnRailwaySongLayout(entry.key, entry.value.toJson());
+      }).toList();
+      final updated = {
+        'ytid': normalizedId,
+        'title': railwayPlaylist.title,
+        'image': railwayPlaylist.artworkUrl,
+        'source': 'railway',
+        'provider': MusicProviderType.railway,
+        'list': songList,
+      };
+      showToast(context, context.l10n!.playlistUpdated);
+      return updated;
+    } catch (e, st) {
+      logger.log(
+        'Error updating Railway playlist $seokey',
+        error: e,
+        stackTrace: st,
+      );
+      return null;
+    }
+  }
 
   final index = findPlaylistIndexByYtId(normalizedId);
   Map? playlist;

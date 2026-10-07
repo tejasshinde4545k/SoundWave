@@ -554,7 +554,7 @@ class MusicRegionService {
       }
 
       // Check Western / English
-      if (_matchesEnglish(fullText) || (!matchedIndian && kpopCount == 0 && jpopCount == 0)) {
+      if (_matchesEnglish(fullText)) {
         englishCount++;
       }
     }

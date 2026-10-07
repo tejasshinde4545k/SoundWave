@@ -26,6 +26,7 @@ import 'package:just_audio/just_audio.dart';
 import 'package:soundwave/main.dart' show logger;
 import 'package:soundwave/services/data_manager.dart';
 import 'package:soundwave/services/settings_manager.dart';
+import 'package:soundwave/services/song_event_logger.dart';
 import 'package:soundwave/utilities/listening_stats_utils.dart';
 import 'package:soundwave/utilities/map_utils.dart';
 
@@ -239,6 +240,17 @@ class ListeningStatsService {
           incrementPlayCount: true,
           countTotalSeconds: false,
         );
+        // Emit a 'play' event for the recommendation pipeline the moment the
+        // session crosses the qualification threshold (>= 30 s or 70% of track).
+        unawaited(
+          songEventLogger.logPlay(
+            song: song,
+            listenedSeconds: _sessionListened.inMilliseconds / 1000.0,
+            durationSeconds: _sessionDuration?.inMilliseconds != null
+                ? _sessionDuration!.inMilliseconds / 1000.0
+                : null,
+          ),
+        );
       }
       return;
     }
@@ -277,6 +289,22 @@ class ListeningStatsService {
 
     if (countCurrentTick) {
       recordListeningSessionProgress(wasPlaying: wasPlaying);
+    }
+
+    // If the session never qualified (user skipped before the threshold),
+    // emit a 'skip' event so the pipeline knows the user didn't want this track.
+    if (!_sessionQualified && _sessionSong != null) {
+      final skippedSong = _sessionSong!;
+      final listenedMs = _sessionListened.inMilliseconds;
+      final durationMs = _sessionDuration?.inMilliseconds;
+      unawaited(
+        songEventLogger.logSkip(
+          song: skippedSong,
+          listenedSeconds: listenedMs / 1000.0,
+          durationSeconds:
+              durationMs != null ? durationMs / 1000.0 : null,
+        ),
+      );
     }
 
     _sessionSong = null;
@@ -352,6 +380,9 @@ class ListeningStatsService {
       currentMonthKey: listeningStatsMonthKey(now),
     );
     _stats = cleared;
+    // Clear recommendation event log alongside Wrapped stats to honour the
+    // GDPR right-to-delete described in PROMPT_RECOMMENDATION_SYSTEM.md §2.3.
+    unawaited(songEventLogger.clearAll());
     await deleteData('user', storageKey);
     // Persist the cleared map last so an in-flight checkpoint flush can't
     // resurrect the deleted stats (skipped if a new recording replaced _stats).

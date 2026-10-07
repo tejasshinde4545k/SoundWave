@@ -19,9 +19,11 @@
  *     please visit: https://github.com/tejasshinde4545k/SoundWave
  */
 
+// ignore_for_file: avoid_print
 import 'dart:async';
 
 import 'package:fluentui_system_icons/fluentui_system_icons.dart';
+import 'package:flutter/foundation.dart';
 import 'package:go_router/go_router.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:material_ui/material_ui.dart';
@@ -30,8 +32,10 @@ import 'package:soundwave/database/radio_stations.db.dart';
 import 'package:soundwave/extensions/l10n.dart';
 import 'package:soundwave/main.dart';
 import 'package:soundwave/models/radio_model.dart';
+import 'package:soundwave/railway_api/api_errors.dart';
 import 'package:soundwave/services/common_services.dart';
 import 'package:soundwave/services/data_manager.dart';
+import 'package:soundwave/services/music_source.dart';
 import 'package:soundwave/services/playlists_manager.dart';
 import 'package:soundwave/services/router_service.dart';
 import 'package:soundwave/utilities/app_utils.dart';
@@ -41,10 +45,15 @@ import 'package:soundwave/widgets/confirmation_dialog.dart';
 import 'package:soundwave/widgets/custom_bar.dart';
 import 'package:soundwave/widgets/custom_search_bar.dart';
 import 'package:soundwave/widgets/mini_player_bottom_space.dart';
+import 'package:soundwave/widgets/music_source_selector.dart';
 import 'package:soundwave/widgets/playlist_bar.dart';
 import 'package:soundwave/widgets/radio_station_card.dart';
 import 'package:soundwave/widgets/section_title.dart';
 import 'package:soundwave/widgets/song_bar.dart';
+
+// ─── Search Result State ──────────────────────────────────────────────────────
+
+enum SearchResultState { initial, loading, success, empty, error }
 
 // ─── Search Category ──────────────────────────────────────────────────────────
 
@@ -111,6 +120,8 @@ class _SearchPageState extends State<SearchPage>
   // ── NEW UI state ──────────────────────────────────────────────────────────
   _SearchCategory _selectedCategory = _SearchCategory.all;
   bool _hasSearchError = false;
+  SearchResultState _resultState = SearchResultState.initial;
+  String? _searchErrorMessage;
 
   // ── Skeleton pulse animation ──────────────────────────────────────────────
   late final AnimationController _skeletonController;
@@ -152,7 +163,6 @@ class _SearchPageState extends State<SearchPage>
       _playlistsSearchResult.isNotEmpty ||
       _radioStationsSearchResult.isNotEmpty;
 
-
   // ─── Search logic (unchanged from original) ────────────────────────────────
 
   Future<void> _submitSearch([String? query]) async {
@@ -185,12 +195,16 @@ class _SearchPageState extends State<SearchPage>
       _radioStationsSearchResult = [];
       _suggestionsList = [];
       _hasSearchError = false;
+      _searchErrorMessage = null;
+      _resultState = SearchResultState.initial;
       _selectedCategory = _SearchCategory.all;
       if (mounted) setState(() {});
       return;
     }
     _fetchingSongs.value = true;
     _hasSearchError = false;
+    _searchErrorMessage = null;
+    _resultState = SearchResultState.loading;
     if (mounted) setState(() {});
 
     if (!searchHistory.contains(query)) {
@@ -200,13 +214,25 @@ class _SearchPageState extends State<SearchPage>
     }
 
     try {
-      // ── Step 1: Search YouTube (Primary Source) ───────────────────────────
-      final results = await Future.wait<List<dynamic>>([
-        fetchSongsList(query),
-        searchArtists(query),
-        getPlaylists(query: query, type: 'album'),
-        getPlaylists(query: query, type: 'playlist'),
-      ]);
+      final source = selectedMusicSource.value;
+
+      print(
+        '[SEARCH]\nSEARCH_PROVIDER: ${source.name}\nSEARCH_QUERY: $query\nSEARCH_REQUEST_START',
+      );
+
+      final results = source == MusicSource.youtube
+          ? await Future.wait<List<dynamic>>([
+              fetchSongsList(query, source: source),
+              searchArtists(query),
+              getPlaylists(query: query, type: 'album'),
+              getPlaylists(query: query, type: 'playlist'),
+            ])
+          : <List<dynamic>>[
+              await fetchSongsList(query, source: source),
+              <dynamic>[],
+              <dynamic>[],
+              <dynamic>[],
+            ];
 
       if (!mounted || requestId != _latestSearchRequest) return;
 
@@ -215,35 +241,51 @@ class _SearchPageState extends State<SearchPage>
           .whereType<Map>()
           .map(Map<String, dynamic>.from)
           .toList();
+      // Artist-fallback song lookup: pass the current source so it never
+      // defaults to YouTube when a different provider is selected.
       if (_songsSearchResult.isEmpty && _artistsSearchResult.isNotEmpty) {
-        _songsSearchResult = await _fetchSongsForResolvedArtist(query);
+        _songsSearchResult = await _fetchSongsForResolvedArtist(
+          query,
+          source: source,
+        );
       }
       _albumsSearchResult = results[2];
       _playlistsSearchResult = results[3];
       _radioStationsSearchResult = _filterRadioStations(query);
 
-      // ── Step 2: Jamendo Fallback ──────────────────────────────────────────
-      if (_songsSearchResult.isNotEmpty ||
-          _artistsSearchResult.isNotEmpty ||
-          _albumsSearchResult.isNotEmpty ||
-          _playlistsSearchResult.isNotEmpty) {
-        _jamendoSearchResult = [];
+      _jamendoSearchResult = [];
+
+      final totalFound = _songsSearchResult.length +
+          _artistsSearchResult.length +
+          _albumsSearchResult.length +
+          _playlistsSearchResult.length +
+          _radioStationsSearchResult.length;
+
+      if (totalFound > 0) {
+        print(
+          '[SEARCH]\nSEARCH_REQUEST_SUCCESS (${_songsSearchResult.length} songs)',
+        );
+        _resultState = SearchResultState.success;
       } else {
-        _jamendoSearchResult = await fetchJamendoSongsList(query);
+        print('[SEARCH]\nSEARCH_REQUEST_EMPTY');
+        _resultState = SearchResultState.empty;
       }
     } catch (e, stackTrace) {
+      print('[SEARCH]\nSEARCH_REQUEST_ERROR: $e');
       logger.log(
-        'Error while searching YouTube songs; attempting Jamendo fallback',
+        'Error while searching ${selectedMusicSource.value.label}',
         error: e,
         stackTrace: stackTrace,
       );
-      if (mounted && requestId == _latestSearchRequest) {
-        try {
-          _jamendoSearchResult = await fetchJamendoSongsList(query);
-        } catch (_) {
-          _hasSearchError = true;
-        }
-      }
+      if (!mounted || requestId != _latestSearchRequest) return;
+      _songsSearchResult = [];
+      _artistsSearchResult = [];
+      _albumsSearchResult = [];
+      _playlistsSearchResult = [];
+      _radioStationsSearchResult = [];
+      _hasSearchError = true;
+      _resultState = SearchResultState.error;
+      _searchErrorMessage = e is ApiError ? e.message : e.toString();
     } finally {
       if (requestId == _latestSearchRequest) {
         _fetchingSongs.value = false;
@@ -263,7 +305,10 @@ class _SearchPageState extends State<SearchPage>
         .toList();
   }
 
-  Future<List<dynamic>> _fetchSongsForResolvedArtist(String query) async {
+  Future<List<dynamic>> _fetchSongsForResolvedArtist(
+    String query, {
+    MusicSource? source,
+  }) async {
     final artistName = _artistsSearchResult.first['title']?.toString().trim();
     if (artistName == null || artistName.isEmpty) return [];
 
@@ -273,12 +318,15 @@ class _SearchPageState extends State<SearchPage>
       '$artistName music',
     };
 
+    // Always pass the current source so artist-fallback never defaults to
+    // YouTube when another provider is selected.
     for (final fallbackQuery in fallbackQueries) {
-      final songs = await fetchSongsList(fallbackQuery);
+      final songs = await fetchSongsList(fallbackQuery, source: source);
       if (songs.isNotEmpty) return songs;
     }
 
     return [];
+
   }
 
   // ─── History helpers ────────────────────────────────────────────────────────
@@ -286,9 +334,7 @@ class _SearchPageState extends State<SearchPage>
   void _removeHistoryItem(dynamic query) {
     final updatedHistory = List.from(searchHistory)..remove(query);
     searchHistoryNotifier.value = updatedHistory;
-    unawaited(
-      addOrUpdateData<List>('user', 'searchHistory', updatedHistory),
-    );
+    unawaited(addOrUpdateData<List>('user', 'searchHistory', updatedHistory));
   }
 
   void _clearAllHistory() {
@@ -397,6 +443,19 @@ class _SearchPageState extends State<SearchPage>
               },
             ),
 
+            const SizedBox(height: 12),
+            MusicSourceSelector(
+              onSelected: (source) async {
+                print('[SEARCH]\nSEARCH_PROVIDER: ${source.name}');
+                await setMusicSource(source);
+                if (_searchBar.text.trim().isNotEmpty) {
+                  await search();
+                } else if (mounted) {
+                  setState(() {});
+                }
+              },
+            ),
+
             // ── Body content area ──────────────────────────────────────────
             AnimatedSwitcher(
               duration: const Duration(milliseconds: 200),
@@ -424,17 +483,18 @@ class _SearchPageState extends State<SearchPage>
     }
 
     // 3. Loading
-    if (_fetchingSongs.value) {
+    if (_fetchingSongs.value || _resultState == SearchResultState.loading) {
       return _buildSkeletonLoader(key: const ValueKey('skeleton'));
     }
 
     // 4. Error state
-    if (_hasSearchError && !_hasResults) {
+    if (_resultState == SearchResultState.error ||
+        (_hasSearchError && !_hasResults)) {
       return _buildErrorState(key: const ValueKey('error'));
     }
 
     // 5. No results
-    if (!_hasResults) {
+    if (_resultState == SearchResultState.empty || !_hasResults) {
       return _buildNoResultsState(key: const ValueKey('no-results'));
     }
 
@@ -588,8 +648,7 @@ class _SearchPageState extends State<SearchPage>
             const SizedBox(height: 24),
 
             // ── Empty-history placeholder ────────────────────────────────
-            if (trimmedHistory.isEmpty)
-              _buildDiscoveryPlaceholder(colorScheme),
+            if (trimmedHistory.isEmpty) _buildDiscoveryPlaceholder(colorScheme),
           ],
         );
       },
@@ -648,9 +707,7 @@ class _SearchPageState extends State<SearchPage>
           children: List.generate(
             5,
             (i) => Padding(
-              padding: EdgeInsets.only(
-                bottom: i < 4 ? 2 : 0,
-              ),
+              padding: EdgeInsets.only(bottom: i < 4 ? 2 : 0),
               child: _SkeletonRow(color: skeletonColor),
             ),
           ),
@@ -664,6 +721,7 @@ class _SearchPageState extends State<SearchPage>
   Widget _buildNoResultsState({Key? key}) {
     final colorScheme = Theme.of(context).colorScheme;
     final query = _searchBar.text;
+    final providerLabel = selectedMusicSource.value.label;
     return Padding(
       key: key,
       padding: const EdgeInsets.symmetric(vertical: 48),
@@ -688,7 +746,7 @@ class _SearchPageState extends State<SearchPage>
             const SizedBox(height: 8),
             Text(
               query.isNotEmpty
-                  ? 'No results for "$query"'
+                  ? 'No results for "$query" on $providerLabel.'
                   : 'Try a different song, artist, or album.',
               textAlign: TextAlign.center,
               style: TextStyle(
@@ -717,6 +775,7 @@ class _SearchPageState extends State<SearchPage>
 
   Widget _buildErrorState({Key? key}) {
     final colorScheme = Theme.of(context).colorScheme;
+    final providerLabel = selectedMusicSource.value.label;
     return Padding(
       key: key,
       padding: const EdgeInsets.symmetric(vertical: 48),
@@ -731,7 +790,8 @@ class _SearchPageState extends State<SearchPage>
             ),
             const SizedBox(height: 16),
             Text(
-              "Couldn't complete the search",
+              '$providerLabel is temporarily unavailable.',
+              textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
@@ -747,6 +807,20 @@ class _SearchPageState extends State<SearchPage>
                 color: colorScheme.onSurfaceVariant,
               ),
             ),
+            if (kDebugMode && _searchErrorMessage != null) ...[
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Text(
+                  '$providerLabel request failed: $_searchErrorMessage',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: colorScheme.error,
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 20),
             Semantics(
               label: 'Try search again',
@@ -778,10 +852,7 @@ class _SearchPageState extends State<SearchPage>
 
   // ─── Results with category filter pills ────────────────────────────────────
 
-  Widget _buildResultsWithFilters({
-    required Color primaryColor,
-    Key? key,
-  }) {
+  Widget _buildResultsWithFilters({required Color primaryColor, Key? key}) {
     return Column(
       key: key,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -808,9 +879,7 @@ class _SearchPageState extends State<SearchPage>
     };
 
     // Only include categories that have results
-    final available = <_SearchCategory, String>{
-      _SearchCategory.all: 'All',
-    };
+    final available = <_SearchCategory, String>{_SearchCategory.all: 'All'};
     if (_songsSearchResult.isNotEmpty || _jamendoSearchResult.isNotEmpty) {
       available[_SearchCategory.songs] = 'Songs';
     }
@@ -989,6 +1058,7 @@ class _SearchPageState extends State<SearchPage>
               cubeIcon: FluentIcons.cd_16_filled,
               isAlbum: true,
               borderRadius: borderRadius,
+              playlistData: playlist,
             ),
           );
         }
@@ -1026,6 +1096,7 @@ class _SearchPageState extends State<SearchPage>
                 playlistArtwork: playlist['image'],
                 cubeIcon: FluentIcons.apps_list_24_filled,
                 borderRadius: borderRadius,
+                playlistData: playlist,
               ),
             ),
           );

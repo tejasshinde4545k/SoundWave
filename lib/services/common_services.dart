@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 /*
  *     Copyright (C) 2026 Valeri Gokadze
  *
@@ -28,21 +29,28 @@ import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
 import 'package:soundwave/constants/clients.dart';
 import 'package:soundwave/main.dart' show logger;
+import 'package:soundwave/railway_api/railway_api.dart';
 import 'package:soundwave/services/data_manager.dart';
 import 'package:soundwave/services/io_service.dart';
 import 'package:soundwave/services/jamendo_service.dart';
 import 'package:soundwave/services/jiosaavn_service.dart';
 import 'package:soundwave/services/lyrics_manager.dart';
 import 'package:soundwave/services/music_region_service.dart';
+import 'package:soundwave/services/music_source.dart';
 import 'package:soundwave/services/playlists_manager.dart';
 import 'package:soundwave/services/proxy_manager.dart';
 import 'package:soundwave/services/recommendation_engine.dart';
 import 'package:soundwave/services/settings_manager.dart';
+import 'package:soundwave/services/song_event_logger.dart';
 import 'package:soundwave/utilities/app_utils.dart';
 import 'package:soundwave/utilities/formatter.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
 List globalSongs = [];
+
+final RailwayMusicApi railwayMusicApi = RailwayMusicApi(ApiClient());
+final MusicRepository railwayMusicRepository =
+    MusicRepository(railwayMusicApi);
 
 ValueNotifier<List> userLikedSongsList = ValueNotifier<List>(
   Hive.box('user').get('likedSongs', defaultValue: []),
@@ -139,18 +147,52 @@ Future<bool> _validateCachedUrl(String cachedUrl) async {
   }
 }
 
-Future<List> fetchSongsList(String searchQuery) async {
+Future<List> fetchSongsList(
+  String searchQuery, {
+  MusicSource? source,
+}) async {
+  final selectedSource = source ?? selectedMusicSource.value;
   try {
-    // If not in cache, perform the search
-    final List<Video> searchResults = await ytClient.search.search(searchQuery);
-    final songsList = searchResults
-        .map((video) => returnSongLayout(0, video))
-        .toList();
+    if (searchQuery.trim().isEmpty) return [];
 
-    return songsList;
+    switch (selectedSource) {
+      case MusicSource.youtube:
+        final searchResults = await ytClient.search.search(searchQuery);
+        return searchResults
+            .asMap()
+            .entries
+            .map((entry) => returnSongLayout(entry.key, entry.value))
+            .toList();
+      case MusicSource.jioSaavn:
+        final songs = await JioSaavnService.instance.searchSongs(searchQuery);
+        print('[JIOSAAVN]\nRAW_RESULT_COUNT: ${songs.length}');
+        final mapped = songs
+            .asMap()
+            .entries
+            .map((entry) => returnJioSaavnSongLayout(entry.key, entry.value))
+            .toList();
+        print('[JIOSAAVN]\nMAPPED_RESULT_COUNT: ${mapped.length}');
+        return mapped;
+      case MusicSource.railway:
+        final songs = await railwayMusicRepository.searchSongs(searchQuery);
+        return songs
+            .asMap()
+            .entries
+            .map((entry) => returnRailwaySongLayout(
+                  entry.key,
+                  entry.value.toJson(),
+                ))
+            .toList();
+      case MusicSource.jamendo:
+        return await fetchJamendoSongsList(searchQuery);
+    }
   } catch (e, stackTrace) {
-    logger.log('Error in fetchSongsList', error: e, stackTrace: stackTrace);
-    return [];
+    logger.log(
+      'Error in ${selectedSource.label} song search',
+      error: e,
+      stackTrace: stackTrace,
+    );
+    rethrow;
   }
 }
 
@@ -398,6 +440,16 @@ Future<void> updateSongLikeStatus(
     unawaited(
       addOrUpdateData<List>('user', 'likedSongs', userLikedSongsList.value),
     );
+
+    // Emit a like or dislike event for the recommendation pipeline.
+    // We use songData (the richer map) when available, falling back to a
+    // minimal stub so the ytid is always present in the stored event.
+    final eventSong = songData ?? {'ytid': normalizedSongId};
+    if (add) {
+      unawaited(songEventLogger.logLike(song: eventSong));
+    } else {
+      unawaited(songEventLogger.logDislike(song: eventSong));
+    }
   } catch (e, stackTrace) {
     logger.log(
       'Error updating song like status',
@@ -416,7 +468,7 @@ Future<Map?> _resolveSongForLikedStatus(String songId, Map? songData) async {
   if (cachedSong != null) return Map<String, dynamic>.from(cachedSong);
 
   // Do NOT call getSongDetails (YouTube API) for Jamendo or JioSaavn IDs — that would fail.
-  if (isJamendoId(songId) || isJioSaavnId(songId)) {
+  if (isJamendoId(songId) || isJioSaavnId(songId) || isRailwayId(songId)) {
     logger.log(
       '_resolveSongForLikedStatus: cannot resolve non-YouTube song without songData '
       'for id $songId',
@@ -673,7 +725,9 @@ Future<List<Map<String, int>>> getSkipSegments(String id) async {
 
 Future<void> getSimilarSong(String songYtId) async {
   // Non-YouTube songs cannot be used to seed YouTube recommendations.
-  if (isJamendoId(songYtId) || isJioSaavnId(songYtId)) {
+  if (isJamendoId(songYtId) ||
+      isJioSaavnId(songYtId) ||
+      isRailwayId(songYtId)) {
     logger.log(
       'getSimilarSong: skipping non-YouTube song $songYtId — '
       'YouTube recommendations require a YouTube ID.',
@@ -791,6 +845,13 @@ Future<String?> fetchSongStreamUrl(String songId, bool isLive) async {
     if (songId.isEmpty) {
       logger.log('fetchSongStreamUrl: songId is empty');
       return null;
+    }
+
+    // ── Railway branch ───────────────────────────────────────────────────────
+    if (isRailwayId(songId)) {
+      final trackId = extractRailwayId(songId);
+      if (trackId == null || trackId.isEmpty) return null;
+      return (await railwayMusicRepository.freshStream(trackId)).hlsUrl;
     }
 
     // ── JioSaavn branch ────────────────────────────────────────────────────────

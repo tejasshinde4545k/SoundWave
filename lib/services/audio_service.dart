@@ -45,6 +45,7 @@ import 'package:soundwave/utilities/formatter.dart'
         extractJamendoId,
         isJioSaavnId,
         extractJioSaavnId,
+        isRailwayId,
         returnSongLayout,
         returnJamendoSongLayout,
         returnJioSaavnSongLayout;
@@ -2125,6 +2126,10 @@ class MusifyAudioHandler extends BaseAudioHandler {
 
     final ytid = song['ytid']?.toString() ?? '';
 
+    if (isRailwayId(ytid)) {
+      return fetchSongStreamUrl(ytid, false);
+    }
+
     // Fast-path for JioSaavn songs: use the pre-resolved audio URL embedded
     // in the song map at search time (avoids an extra API call).
     if (isJioSaavnId(ytid)) {
@@ -2253,9 +2258,10 @@ class MusifyAudioHandler extends BaseAudioHandler {
         // Do NOT cache JioSaavn or Jamendo stream URLs in Hive — they expire
         // and each service manages its own short-lived in-memory cache.
         final songYtid = song['ytid']?.toString() ?? '';
-        if (!isJamendoId(songYtid) && !isJioSaavnId(songYtid)) {
-          final cacheKey =
-              'song_${songYtid}_${audioQualitySetting.value}_url';
+        if (!isJamendoId(songYtid) &&
+            !isJioSaavnId(songYtid) &&
+            !isRailwayId(songYtid)) {
+          final cacheKey = 'song_${songYtid}_${audioQualitySetting.value}_url';
           unawaited(addOrUpdateData<String>('cache', cacheKey, songUrl));
         }
       }
@@ -2778,8 +2784,7 @@ class MusifyAudioHandler extends BaseAudioHandler {
       final rawTrack = jiosaavnTracks[i];
 
       // Extract a pre-resolved stream URL from the search response.
-      final preResolvedUrl =
-          JioSaavnService.extractStreamUrlFromSong(rawTrack);
+      final preResolvedUrl = JioSaavnService.extractStreamUrlFromSong(rawTrack);
 
       final songMap = returnJioSaavnSongLayout(
         i,
@@ -2931,7 +2936,9 @@ class MusifyAudioHandler extends BaseAudioHandler {
               candidate: Map<String, dynamic>.from(candidate),
               contextSong: Map<String, dynamic>.from(ctxSongA),
             )) {
-          debugPrint('[SoundWave AutoNext] REJECTED IRRELEVANT/DUPLICATE: $candidateTitle');
+          debugPrint(
+            '[SoundWave AutoNext] REJECTED IRRELEVANT/DUPLICATE: $candidateTitle',
+          );
         } else if (isDuplicateA) {
           debugPrint(
             '[RECOMMENDATION FILTER]\n'
@@ -2943,7 +2950,9 @@ class MusifyAudioHandler extends BaseAudioHandler {
             'DECISION=REJECT\n'
             'REASON=already_in_queue',
           );
-          debugPrint('[SoundWave AutoNext] REJECTED IRRELEVANT/DUPLICATE: $candidateTitle');
+          debugPrint(
+            '[SoundWave AutoNext] REJECTED IRRELEVANT/DUPLICATE: $candidateTitle',
+          );
         } else {
           debugPrint('[SoundWave AutoNext] YOUTUBE RECOMMENDATION FOUND: true');
           debugPrint('[SoundWave AutoNext] TESTING SONG: $candidateTitle');
@@ -3047,9 +3056,9 @@ class MusifyAudioHandler extends BaseAudioHandler {
 
               final songLayoutPreview = returnSongLayout(0, video);
               if (!RecommendationEngine.isValidQueueCandidate(
-                    candidate: songLayoutPreview,
-                    contextSong: Map<String, dynamic>.from(baseSong),
-                  )) {
+                candidate: songLayoutPreview,
+                contextSong: Map<String, dynamic>.from(baseSong),
+              )) {
                 debugPrint(
                   '[SoundWave AutoNext] REJECTED IRRELEVANT/DUPLICATE: $videoTitle',
                 );
@@ -3190,18 +3199,18 @@ class MusifyAudioHandler extends BaseAudioHandler {
 
             if (baseSong != null) {
               if (!RecommendationEngine.isValidQueueCandidate(
-                    candidate: Map<String, dynamic>.from(song),
-                    contextSong: Map<String, dynamic>.from(baseSong),
-                  )) {
+                candidate: Map<String, dynamic>.from(song),
+                contextSong: Map<String, dynamic>.from(baseSong),
+              )) {
                 debugPrint(
                   '[SoundWave AutoNext] REJECTED IRRELEVANT/DUPLICATE: $songTitle',
                 );
                 continue;
               }
               if (_isCanonicalDuplicate(
-                    Map<String, dynamic>.from(song),
-                    baseSong,
-                  )) {
+                Map<String, dynamic>.from(song),
+                baseSong,
+              )) {
                 debugPrint(
                   '[RECOMMENDATION FILTER]\n'
                   'TITLE=${song['title']}\n'

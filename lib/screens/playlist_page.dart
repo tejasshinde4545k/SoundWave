@@ -60,12 +60,14 @@ class PlaylistPage extends StatefulWidget {
     super.key,
     this.playlistId,
     this.playlistData,
+    this.provider,
     this.cubeIcon = FluentIcons.text_bullet_list_24_filled,
     this.isArtist = false,
   });
 
   final String? playlistId;
   final dynamic playlistData;
+  final String? provider;
   final IconData cubeIcon;
   final bool isArtist;
 
@@ -125,6 +127,19 @@ class _PlaylistPageState extends State<PlaylistPage> {
       final resolvedId =
           initialPlaylist?['ytid']?.toString() ?? widget.playlistId;
 
+      final resolvedProvider = widget.provider ??
+          initialPlaylist?['provider']?.toString() ??
+          initialPlaylist?['source']?.toString();
+
+      if (resolvedProvider == 'jiosaavn' || resolvedProvider == 'jamendo') {
+        if (mounted) {
+          showToast(context, 'Playlists are not supported by this provider.');
+        }
+        _isInitializingPlaylist = false;
+        if (mounted) setState(() {});
+        return;
+      }
+
       if (initialPlaylist != null) {
         _playlist = initialPlaylist;
         final playlistList = _playlist?['list'] as List?;
@@ -140,6 +155,7 @@ class _PlaylistPageState extends State<PlaylistPage> {
                 sourceSongId: initialPlaylist?['sourceSongId']?.toString(),
                 sourceVideoAuthor: initialPlaylist?['videoAuthor']?.toString(),
                 preferredVerified: initialPlaylist?['isVerifiedArtist'] == true,
+                provider: resolvedProvider,
               ) ??
               initialPlaylist;
         }
@@ -152,6 +168,7 @@ class _PlaylistPageState extends State<PlaylistPage> {
           sourceSongId: initialPlaylist?['sourceSongId']?.toString(),
           sourceVideoAuthor: initialPlaylist?['videoAuthor']?.toString(),
           preferredVerified: initialPlaylist?['isVerifiedArtist'] == true,
+          provider: resolvedProvider,
         );
       }
 

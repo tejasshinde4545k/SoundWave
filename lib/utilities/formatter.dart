@@ -19,6 +19,7 @@
  *     please visit: https://github.com/tejasshinde4545k/SoundWave
  */
 
+import 'package:soundwave/services/music_source.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
 const _noiseTerms =
@@ -88,6 +89,7 @@ Map<String, dynamic> returnSongLayout(
     'highResImage': playlistImage ?? song.thumbnails.maxResUrl,
     'duration': song.duration?.inSeconds,
     'isLive': song.isLive,
+    'provider': 'youtube',
   };
 }
 
@@ -166,11 +168,49 @@ Map<String, dynamic> returnJamendoSongLayout(
     // It does NOT affect playback — the 'ytid' prefix is the authoritative
     // discriminator everywhere.
     'source': 'jamendo',
+    'provider': 'jamendo',
     // Pre-cached stream URL from the search response — avoids an extra API
     // call when the user immediately taps a freshly searched result.
     // This field is optional; if absent, JamendoService.getStreamUrl() is
     // called at play time.
     if (audioUrl != null && audioUrl.isNotEmpty) 'jamendoAudioUrl': audioUrl,
+  };
+}
+
+// ─── Railway helpers ─────────────────────────────────────────────────────────
+
+/// The prefix that identifies a Railway song in the app-wide `ytid` field.
+const String railwayIdPrefix = 'railway:';
+
+bool isRailwayId(String? id) => id?.startsWith(railwayIdPrefix) ?? false;
+
+String? extractRailwayId(String? ytid) {
+  if (!isRailwayId(ytid)) return null;
+  return ytid!.substring(railwayIdPrefix.length);
+}
+
+Map<String, dynamic> returnRailwaySongLayout(
+  int index,
+  Map<String, dynamic> song,
+) {
+  final trackId = song['track_id']?.toString() ?? song['id']?.toString() ?? '';
+  final artwork = song['artworkUrl']?.toString() ?? '';
+  return {
+    'id': index,
+    'ytid': '$railwayIdPrefix$trackId',
+    'title': song['title']?.toString() ?? '',
+    'artist': song['artists']?.toString() ?? '',
+    'album': song['album']?.toString() ?? song['albumTitle']?.toString() ?? '',
+    'image': artwork,
+    'lowResImage': artwork,
+    'highResImage': artwork,
+    'duration': int.tryParse(song['duration']?.toString() ?? ''),
+    'isLive': false,
+    'source': 'railway',
+    'provider': MusicProviderType.railway,
+    'railwayTrackId': trackId,
+    if (song['language'] != null) 'language': song['language']?.toString(),
+    if (song['seokey'] != null) 'seokey': song['seokey']?.toString(),
   };
 }
 
@@ -219,9 +259,8 @@ Map<String, dynamic> returnJioSaavnSongLayout(
   if (primaryArtists is List && primaryArtists.isNotEmpty) {
     artistName = primaryArtists.first?['name']?.toString() ?? '';
   } else {
-    artistName = song['primaryArtists']?.toString() ??
-        song['artist']?.toString() ??
-        '';
+    artistName =
+        song['primaryArtists']?.toString() ?? song['artist']?.toString() ?? '';
   }
 
   // Image: pick the highest available resolution from the list.
@@ -229,7 +268,8 @@ Map<String, dynamic> returnJioSaavnSongLayout(
   var highRes = '';
   var lowRes = '';
   if (imageList is List && imageList.isNotEmpty) {
-    highRes = imageList.last['url']?.toString() ??
+    highRes =
+        imageList.last['url']?.toString() ??
         imageList.first['url']?.toString() ??
         '';
     lowRes = imageList.first['url']?.toString() ?? highRes;
@@ -259,6 +299,7 @@ Map<String, dynamic> returnJioSaavnSongLayout(
     // Identifies the provider for debugging and queue trace output.
     // Does NOT affect playback — `ytid` prefix is authoritative.
     'source': 'jiosaavn',
+    'provider': 'jiosaavn',
     // Pre-cached stream URL — avoids an extra API round-trip at play time.
     // This field is optional; if absent, JioSaavnService.getStreamUrl() is
     // called at play time via _getPlaybackUrl() in audio_service.dart.
